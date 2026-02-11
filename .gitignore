@@ -144,7 +144,6 @@ outputs/
 data/
 datasets/
 *.csv
-*.json
 *.txt
 !requirements.txt
 !README.txt
