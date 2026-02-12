@@ -292,10 +292,12 @@ class SimplifiedSLMForCausalLM(SimplifiedSLMPreTrainedModel, GenerationMixin):
         **kwargs
     ):
         """Prepare inputs for generation step."""
-        # Only use last token if cache exists
-        if past_key_values is not None:
-            if not isinstance(past_key_values, RecurrentCache):
-                past_key_values = RecurrentCache.from_legacy_cache(past_key_values, input_ids.shape[1] - 1)
+        # Convert to RecurrentCache if needed
+        if past_key_values is not None and not isinstance(past_key_values, RecurrentCache):
+            past_key_values = RecurrentCache.from_legacy_cache(past_key_values, input_ids.shape[1] - 1)
+        
+        # Only use last token if cache exists and has content
+        if past_key_values is not None and len(past_key_values) > 0:
             input_ids, attention_mask = input_ids[:, -1:], attention_mask[:, -1:]
             
         # Use embeddings only for first step
