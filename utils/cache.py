@@ -108,6 +108,19 @@ class RecurrentCache(Cache):
         """Converts a legacy cache format into RecurrentCache."""
         cache = cls(seen_tokens)
         if past_key_values is not None:
+            # If it's already a RecurrentCache, return it
+            if isinstance(past_key_values, RecurrentCache):
+                return past_key_values
+            
+            # If it's a Cache object (like DynamicCache), convert to legacy format first
+            if isinstance(past_key_values, Cache):
+                if hasattr(past_key_values, 'to_legacy_cache'):
+                    past_key_values = past_key_values.to_legacy_cache()
+                else:
+                    # For Cache objects without to_legacy_cache, try to extract states
+                    raise TypeError(f"Cannot convert {type(past_key_values).__name__} to RecurrentCache")
+            
+            # Now handle as tuple/list
             for layer_idx in range(len(past_key_values)):
                 cache.update(past_key_values[layer_idx], layer_idx)
         return cache
