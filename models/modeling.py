@@ -295,9 +295,12 @@ class SimplifiedSLMForCausalLM(SimplifiedSLMPreTrainedModel, GenerationMixin):
         # Convert to RecurrentCache if needed
         if past_key_values is not None and not isinstance(past_key_values, RecurrentCache):
             past_key_values = RecurrentCache.from_legacy_cache(past_key_values, input_ids.shape[1] - 1)
+            # If conversion resulted in empty cache, treat as no cache
+            if len(past_key_values) == 0:
+                past_key_values = None
         
         # Only use last token if cache exists and has content
-        if past_key_values is not None and len(past_key_values) > 0:
+        if past_key_values is not None:
             input_ids, attention_mask = input_ids[:, -1:], attention_mask[:, -1:]
             
         # Use embeddings only for first step
