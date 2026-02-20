@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 
 from simplified_slm.training.config import TrainingConfig
 from simplified_slm.training.data import collate_fn
-from simplified_slm.training.optimizer import build_optimizer, build_scheduler
+from simplified_slm.training.optimizer import build_optimizer, build_optimizer_hierarchical, build_scheduler
 from simplified_slm.training.logger import TrainingLogger
 
 
@@ -58,8 +58,11 @@ class Trainer:
         # Device
         self.device = next(model.parameters()).device
         
-        # Optimizer and scheduler
-        self.optimizer = build_optimizer(model.named_parameters(), config)
+        # Optimizer and scheduler (use hierarchical optimizer if lr_multipliers specified)
+        if hasattr(config, 'lr_multipliers') and config.lr_multipliers:
+            self.optimizer = build_optimizer_hierarchical(model, config)
+        else:
+            self.optimizer = build_optimizer(model.named_parameters(), config)
         self.scheduler = build_scheduler(self.optimizer, config)
         
         # Mixed precision
@@ -73,6 +76,13 @@ class Trainer:
         # State
         self.global_step = 0
         self.best_val_loss = float('inf')
+        
+        # Load balancing for hierarchical models (HNetBit)
+        self.use_load_balancing = (
+            hasattr(config, 'lambda_lb') and config.lambda_lb > 0.0 and
+            hasattr(model, 'backbone') and hasattr(model.backbone, '_apply_lr_multiplier')
+        )
+        self.lambda_lb = getattr(config, 'lambda_lb', 0.0)
         
         # DataLoader
         self.train_loader = DataLoader(
@@ -95,6 +105,48 @@ class Trainer:
             )
         else:
             self.val_loader = None
+
+    def compute_load_balancing_loss(self, router_outputs):
+        """
+        Compute load balancing loss for hierarchical models with dynamic chunking.
+        
+        Encourages balanced chunking across sequences to prevent degenerate solutions
+        (all chunks or no chunks). Based on H-Net's load balancing loss.
+        
+        Args:
+            router_outputs: List of RoutingModuleOutput from each hierarchy stage
+        
+        Returns:
+            Load balancing loss tensor
+        """
+        if not router_outputs:
+            return 0.0
+        
+        total_lb_loss = 0.0
+        N = getattr(self.config, 'downsampling_factor', 2.5)
+        
+        for router_output in router_outputs:
+            if router_output is None:
+                continue
+                
+            # Get boundary predictions
+            boundary_prob = router_output.boundary_prob
+            tokenized_prob = boundary_prob[..., -1]  # Last token probabilities
+            boundary_mask = router_output.boundary_mask
+            
+            # Compute ratios
+            true_ratio = boundary_mask.float().mean()
+            average_prob = tokenized_prob.float().mean()
+            
+            # Load balancing loss formula from H-Net
+            stage_lb_loss = (
+                (1 - true_ratio) * (1 - average_prob) +
+                (true_ratio) * (average_prob) * (N - 1)
+            ) * N / (N - 1)
+            
+            total_lb_loss += stage_lb_loss
+        
+        return total_lb_loss
 
     def train(self) -> None:
         """Run the full training loop."""
@@ -132,8 +184,19 @@ class Trainer:
                     input_ids=batch['input_ids'],
                     attention_mask=batch.get('attention_mask'),
                     labels=batch['labels'],
+                    output_hidden_states=self.use_load_balancing,  # Get router outputs if needed
                 )
-                loss = outputs.loss / self.config.gradient_accumulation_steps
+                ce_loss = outputs.loss
+                
+                # Add load balancing loss for hierarchical models
+                if self.use_load_balancing and outputs.hidden_states:
+                    lb_loss = self.compute_load_balancing_loss(outputs.hidden_states)
+                    total_loss = ce_loss + self.lambda_lb * lb_loss
+                else:
+                    total_loss = ce_loss
+                    lb_loss = 0.0
+                
+                loss = total_loss / self.config.gradient_accumulation_steps
             
             # Backward
             self.scaler.scale(loss).backward()
@@ -158,11 +221,14 @@ class Trainer:
                 # Log
                 if self.global_step % self.config.log_interval == 0:
                     lr = self.scheduler.get_last_lr()[0]
-                    self.logger.log({
+                    log_dict = {
                         'loss': accumulation_loss,
                         'lr': lr,
                         'grad_norm': grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm,
-                    }, self.global_step)
+                    }
+                    if self.use_load_balancing:
+                        log_dict['lb_loss'] = lb_loss.item() if isinstance(lb_loss, torch.Tensor) else lb_loss
+                    self.logger.log(log_dict, self.global_step)
                 
                 accumulation_loss = 0.0
                 

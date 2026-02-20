@@ -58,6 +58,11 @@ class TrainingConfig:
     adam_beta2: float = 0.95
     adam_eps: float = 1e-8
     
+    # Hierarchical model specific (HNetBit)
+    lr_multipliers: Optional[list[float]] = None  # Per-stage LR multipliers, e.g., [2.0, 1.5, 1.0]
+    lambda_lb: float = 0.0  # Load balancing loss weight (0.0 = disabled, recommended: 0.01-0.1)
+    downsampling_factor: float = 2.5  # Expected downsampling ratio for load balancing
+    
     # Data
     max_seq_length: int = 512
     

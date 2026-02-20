@@ -42,11 +42,11 @@ dev = [
 ]
 
 [project.scripts]
-slm-generate = "simplified_slm.generate:main"
+slm-generate = "generate:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["simplified_slm*"]
+[tool.setuptools]
+packages = ["simplified_slm"]
+package-dir = {"simplified_slm" = "."}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

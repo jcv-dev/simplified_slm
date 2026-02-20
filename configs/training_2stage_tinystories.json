@@ -33,7 +33,11 @@
         "log_interval": 50,
         
         "mixed_precision": "bf16",
-        "compile_model": false
+        "compile_model": false,
+        
+        "lr_multipliers": [2.0, 1.5, 1.0],
+        "lambda_lb": 0.05,
+        "downsampling_factor": 2.5
     },
     
     "evaluation": {

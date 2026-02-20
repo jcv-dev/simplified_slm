@@ -405,6 +405,34 @@ class HNetBit(nn.Module):
         else:
             self.pad_dimension = None
 
+    def _apply_lr_multiplier(self, lr_multipliers: List[float]) -> None:
+        """
+        Apply stage-specific learning rate multipliers to parameters.
+        
+        Follows H-Net's pattern of using param._optim attribute to store
+        per-parameter optimization settings that are later read by the
+        optimizer builder.
+        
+        Args:
+            lr_multipliers: List of LR multipliers per stage [stage_0, stage_1, ...]
+                           e.g., [2.0, 1.5, 1.0] means stage 0 gets 2x base LR,
+                           stage 1 gets 1.5x, stage 2 gets 1x
+        
+        Example:
+            >>> model = HNetBit(config)
+            >>> model._apply_lr_multiplier([2.0, 1.5, 1.0])
+            >>> # Now outer stage params have _optim={'lr_multiplier': 2.0}
+        """
+        from simplified_slm.utils.helpers import apply_optimization_params
+        
+        # Apply LR multiplier to all parameters at this stage
+        for param in self.parameters():
+            apply_optimization_params(param, lr_multiplier=lr_multipliers[self.stage_idx])
+        
+        # Recursively apply to nested stages (if hierarchical)
+        if not self.is_innermost and hasattr(self.main_network, '_apply_lr_multiplier'):
+            self.main_network._apply_lr_multiplier(lr_multipliers)
+
     def _count_residuals(self) -> int:
         """Count total residual additions for weight initialization scaling."""
         if self.is_innermost:
@@ -828,6 +856,7 @@ class HNetBitForCausalLM(HNetBitPreTrainedModel, GenerationMixin):
             loss=loss,
             logits=logits,
             past_key_values=inference_params,
+            hidden_states=bpred_outputs if output_hidden_states else None,  # Store router outputs
         )
 
     def count_parameters(self, trainable_only: bool = True) -> int:
