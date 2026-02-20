@@ -55,12 +55,20 @@ try:
         @staticmethod
         def forward(ctx, x, y):
             ctx.save_for_backward(x, y)
-            return _swiglu_fwd(x, y)
+            if x.is_cuda:
+                return _swiglu_fwd(x, y)
+            return F.silu(x) * y
 
         @staticmethod
         def backward(ctx, dout):
             x, y = ctx.saved_tensors
-            return _swiglu_bwd(x, y, dout)
+            if x.is_cuda:
+                return _swiglu_bwd(x, y, dout)
+            # CPU fallback for backward
+            x_sigmoid = torch.sigmoid(x.float())
+            dx = x_sigmoid * (1 + x.float() * (1.0 - x_sigmoid)) * dout.float() * y.float()
+            dy = x.float() * x_sigmoid * dout.float()
+            return dx.to(x.dtype), dy.to(y.dtype)
     
     swiglu = SwiGLUFunction.apply
     _CUDA_SWIGLU_AVAILABLE = True
