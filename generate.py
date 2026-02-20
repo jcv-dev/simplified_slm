@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import json
 import torch
 import sys
 import os
@@ -17,41 +18,62 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
+from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 from simplified_slm.utils import ByteTokenizer
 
 
-def load_model(model_path: str = None, config: SimplifiedSLMConfig = None, device: str = 'cuda'):
+def load_model(
+    model_path: str = None,
+    config=None,
+    device: str = 'cuda',
+    model_type: str = 'flat',
+):
     """
-    Load or create a SimplifiedSLM model.
+    Load or create a model (flat SimplifiedSLM or hierarchical HNetBit).
     
     Args:
         model_path: Path to saved model checkpoint
         config: Model configuration (used if no checkpoint)
         device: Device to load model on
+        model_type: 'flat' for SimplifiedSLM, 'hierarchical' for HNetBit
         
     Returns:
         Loaded model
     """
     if model_path and os.path.exists(model_path):
         print(f"Loading model from {model_path}")
-        checkpoint = torch.load(model_path, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         
         if 'config' in checkpoint:
-            config = SimplifiedSLMConfig(**checkpoint['config'])
-        elif config is None:
-            config = SimplifiedSLMConfig()
-            
-        model = SimplifiedSLMForCausalLM(config)
+            cfg_dict = checkpoint['config']
+            detected_type = cfg_dict.get('model_type', model_type)
+            if detected_type == 'hnet_bit':
+                config = HNetBitConfig(**cfg_dict)
+                model_type = 'hierarchical'
+            else:
+                config = SimplifiedSLMConfig(**cfg_dict)
+                model_type = 'flat'
+        
+        if model_type == 'hierarchical':
+            config = config or HNetBitConfig()
+            model = HNetBitForCausalLM(config)
+        else:
+            config = config or SimplifiedSLMConfig()
+            model = SimplifiedSLMForCausalLM(config)
         
         if 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
         else:
             model.load_state_dict(checkpoint)
     else:
-        if config is None:
-            config = SimplifiedSLMConfig()
-        print(f"Creating new model with config: {config.hidden_size}d, {config.num_hidden_layers}L")
-        model = SimplifiedSLMForCausalLM(config)
+        if model_type == 'hierarchical':
+            config = config or HNetBitConfig()
+            print(f"Creating new HNetBit model: d_model={config.d_model}, stages={config.num_stages}")
+            model = HNetBitForCausalLM(config)
+        else:
+            config = config or SimplifiedSLMConfig()
+            print(f"Creating new model with config: {config.hidden_size}d, {config.num_hidden_layers}L")
+            model = SimplifiedSLMForCausalLM(config)
     
     model = model.to(device)
     model.eval()
@@ -143,7 +165,12 @@ def main():
     parser.add_argument('--hidden_size', type=int, default=512,
                         help='Model hidden size (if creating new)')
     parser.add_argument('--num_layers', type=int, default=6,
-                        help='Number of layers (if creating new)')
+                        help='Number of layers (if creating new flat model)')
+    parser.add_argument('--model_type', type=str, default='flat',
+                        choices=['flat', 'hierarchical'],
+                        help='Model type: flat (SimplifiedSLM) or hierarchical (HNetBit)')
+    parser.add_argument('--model_config', type=str, default=None,
+                        help='Path to model config JSON (for hierarchical models)')
     
     args = parser.parse_args()
     
@@ -153,14 +180,26 @@ def main():
         args.device = 'cpu'
     
     # Create config
-    config = SimplifiedSLMConfig(
-        vocab_size=256,
-        hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_layers,
-    )
+    if args.model_config:
+        with open(args.model_config, 'r') as f:
+            cfg_dict = json.load(f)
+        if cfg_dict.get('model_type') == 'hnet_bit':
+            config = HNetBitConfig(**cfg_dict)
+            args.model_type = 'hierarchical'
+        else:
+            config = SimplifiedSLMConfig(**cfg_dict)
+            args.model_type = 'flat'
+    elif args.model_type == 'hierarchical':
+        config = HNetBitConfig()
+    else:
+        config = SimplifiedSLMConfig(
+            vocab_size=256,
+            hidden_size=args.hidden_size,
+            num_hidden_layers=args.num_layers,
+        )
     
     # Load model
-    model = load_model(args.model_path, config, args.device)
+    model = load_model(args.model_path, config, args.device, args.model_type)
     tokenizer = ByteTokenizer()
     
     print(f"\nModel: {model.count_parameters():,} parameters")

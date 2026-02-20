@@ -23,8 +23,11 @@ Configuration:
 __version__ = "0.1.0"
 
 from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
+from simplified_slm.models import HNetBitConfig, HNetBitForCausalLM
 
 __all__ = [
     "SimplifiedSLMConfig",
     "SimplifiedSLMForCausalLM",
+    "HNetBitConfig",
+    "HNetBitForCausalLM",
 ]
