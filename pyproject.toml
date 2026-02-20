@@ -27,7 +27,12 @@ dependencies = [
     "transformers>=4.30.0",
     "triton>=3.5.0",
     "einops>=0.6.0",
-    "numpy>=1.21.0,<2",
+    "numpy>=2",
+    "datasets",
+    "wandb",
+    "tensorboard",
+    "matplotlib",
+    "seaborn"
 ]
 
 [project.optional-dependencies]

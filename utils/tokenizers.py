@@ -24,7 +24,23 @@ class ByteTokenizer:
         self.vocab_size = 256
         self.bos_idx = 254
         self.eos_idx = 255
+        self.pad_idx = 0  # Use null byte as padding
         self.dtype = np.uint8
+    
+    @property
+    def pad_token_id(self):
+        """Alias for compatibility with HuggingFace API."""
+        return self.pad_idx
+    
+    @property
+    def eos_token_id(self):
+        """Alias for compatibility with HuggingFace API."""
+        return self.eos_idx
+    
+    @property
+    def bos_token_id(self):
+        """Alias for compatibility with HuggingFace API."""
+        return self.bos_idx
 
     def encode(
         self, 

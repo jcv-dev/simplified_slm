@@ -82,26 +82,52 @@ config = SimplifiedSLMConfig.small()  # or .base() or .large()
 ```
 simplified-slm/
 ├── models/
-│   ├── config.py       # SimplifiedSLMConfig
-│   └── modeling.py     # SimplifiedSLMForCausalLM
+│   ├── config.py           # SimplifiedSLMConfig
+│   ├── modeling.py         # SimplifiedSLMForCausalLM
+│   └── hnet_bit.py         # HNetBit hierarchical model
 ├── layers/
-│   └── hgrn_bit.py     # HGRNBitAttention, HGRNBitMLP, HGRNBitBlock
+│   └── hgrn_bit.py         # HGRNBitAttention, HGRNBitMLP, HGRNBitBlock
 ├── ops/
-│   ├── bitnet.py       # BitLinear, weight_quant, activation_quant
-│   ├── activations.py  # SwiGLU, swish
+│   ├── bitnet.py           # BitLinear, weight_quant, activation_quant
+│   ├── activations.py      # SwiGLU, swish
+│   ├── dynamic_chunking.py # Cosine-similarity based chunking
 │   ├── fused_norm_gate.py  # FusedRMSNormSwishGate
 │   └── hgrn/
-│       ├── chunk.py        # Chunk-parallel HGRN
-│       └── recurrent_fuse.py  # Fused recurrent HGRN
+│       ├── chunk.py          # Chunk-parallel HGRN
+│       └── recurrent_fuse.py # Fused recurrent HGRN
+├── training/
+│   ├── trainer.py          # Training loop
+│   ├── config.py           # TrainingConfig
+│   ├── data.py             # ByteLevelDataset
+│   ├── dataset_loader.py   # HuggingFace dataset integration
+│   ├── metrics.py          # BPB, perplexity, evaluation metrics
+│   ├── evaluator.py        # Comprehensive evaluation pipeline
+│   ├── logger.py           # TensorBoard, W&B, CSV logging
+│   └── optimizer.py        # Optimizer factory
 ├── utils/
-│   ├── tokenizers.py   # ByteTokenizer
-│   ├── cache.py        # RecurrentCache
-│   └── helpers.py      # Utility functions
+│   ├── tokenizers.py       # ByteTokenizer
+│   ├── cache.py            # RecurrentCache
+│   ├── hnet_cache.py       # HNetBit cache
+│   └── helpers.py          # Utility functions
+├── scripts/
+│   ├── prepare_tinystories.py  # Dataset preparation
+│   ├── evaluate_model.py       # Model evaluation
+│   ├── analyze_training.py     # Training analysis
+│   └── run_experiment.py       # End-to-end pipeline
 ├── configs/
-│   └── slm_base.json   # Default configuration
+│   ├── slm_base.json                   # Flat model config
+│   ├── hnet_bit_2stage.json            # 2-stage hierarchical
+│   ├── training_2stage_tinystories.json # 2-stage training config
+│   └── training_flat_tinystories.json  # Flat training config
 ├── tests/
-│   └── test_model.py   # Unit tests
-└── generate.py         # Text generation script
+│   ├── test_model.py           # Model tests
+│   ├── test_dataset_loader.py  # Dataset loader tests
+│   ├── test_metrics.py         # Metrics tests
+│   └── test_evaluator.py       # Evaluator tests
+├── docs/
+│   └── TRAINING_GUIDE.md       # Comprehensive training guide
+├── train.py                    # Training entry point
+└── generate.py                 # Text generation script
 ```
 
 ## Technical Details
@@ -148,13 +174,60 @@ python tests/test_model.py
 ## Generation
 
 ```bash
+# Basic generation
 python generate.py --prompt "Hello" --max_tokens 100 --temperature 0.8
 python generate.py --model_path ./checkpoint.pt --prompt "Once upon a time" --greedy
+
+# Interactive mode
+python generate.py --model_path ./checkpoint.pt --interactive
+
+# Batch generation from file
+python generate.py --model_path ./checkpoint.pt --prompt_file prompts.txt --output_file outputs.txt
 ```
 
-## Training (Coming in Objective 2)
+## Training
 
-Training scripts and dataset preparation will be added in Objective 2.
+Full training infrastructure is now available! See [docs/TRAINING_GUIDE.md](docs/TRAINING_GUIDE.md) for comprehensive documentation.
+
+### Quick Start
+
+```bash
+# 1. Prepare TinyStories dataset
+python scripts/prepare_tinystories.py --output_dir ./data/tinystories
+
+# 2. Train 2-stage hierarchical model
+python train.py --config configs/training_2stage_tinystories.json
+
+# 3. Evaluate model
+python scripts/evaluate_model.py --checkpoint ./checkpoints/best_model.pt --dataset tinystories
+
+# 4. Generate text
+python generate.py --model_path ./checkpoints/best_model.pt --prompt "Once upon a time"
+```
+
+### End-to-End Pipeline
+
+```bash
+# Run complete experiment (data → train → evaluate → analyze)
+python scripts/run_experiment.py --config configs/training_2stage_tinystories.json
+```
+
+### Training Features
+
+- **Datasets**: TinyStories, WikiText-2/103, custom text directories
+- **Mixed Precision**: BF16 training with PyTorch AMP
+- **Logging**: TensorBoard + Weights & Biases + CSV export
+- **Metrics**: BPB (bits per byte), perplexity, accuracy, UTF-8 validity
+- **Monitoring**: Ternary weight stats, gradient norms, generation samples
+- **Analysis**: Training curves, loss visualization, checkpoint comparison
+
+### Model Configurations
+
+| Model Type | Config File | Description |
+|------------|-------------|-------------|
+| 2-Stage Hierarchical | `training_2stage_tinystories.json` | Full hierarchical with dynamic chunking |
+| 1-Stage Hierarchical | `training_1stage_tinystories.json` | Single hierarchy level |
+| Flat Baseline | `training_flat_tinystories.json` | Standard flat model for comparison |
 
 ## References
 

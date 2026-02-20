@@ -1,0 +1,57 @@
+{
+    "experiment_name": "slm_base_tinystories",
+    "description": "Train flat SimplifiedSLM on TinyStories dataset (baseline)",
+    
+    "model": {
+        "config_file": "configs/slm_base.json",
+        "type": "flat"
+    },
+    
+    "data": {
+        "dataset": "tinystories",
+        "data_dir": "./data/tinystories",
+        "max_seq_length": 512,
+        "val_ratio": 0.1,
+        "test_ratio": 0.1
+    },
+    
+    "training": {
+        "batch_size": 32,
+        "gradient_accumulation_steps": 2,
+        "effective_batch_size": 64,
+        
+        "learning_rate": 3e-4,
+        "weight_decay": 0.01,
+        "max_grad_norm": 1.0,
+        
+        "max_steps": 10000,
+        "warmup_steps": 500,
+        "scheduler": "cosine",
+        
+        "eval_interval": 500,
+        "save_interval": 1000,
+        "log_interval": 50,
+        
+        "mixed_precision": "bf16",
+        "compile_model": false
+    },
+    
+    "evaluation": {
+        "batch_size": 32,
+        "num_generation_samples": 20,
+        "generation_max_tokens": 150
+    },
+    
+    "output": {
+        "checkpoint_dir": "./checkpoints/slm_base_tinystories",
+        "log_dir": "./logs/slm_base_tinystories",
+        "results_dir": "./results/slm_base_tinystories"
+    },
+    
+    "hardware": {
+        "device": "cuda",
+        "num_workers": 4
+    },
+    
+    "seed": 42
+}
