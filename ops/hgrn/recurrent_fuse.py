@@ -188,6 +188,30 @@ class FusedRecurrentHGRNFunction(torch.autograd.Function):
         return dx, dg, None, None
 
 
+def _naive_recurrent_hgrn(
+    x: torch.Tensor,
+    g: torch.Tensor,
+    initial_state: torch.Tensor = None,
+    output_final_state: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Naive (pure-PyTorch) recurrent HGRN for CPU fallback.
+    
+    Computes: h_t = g_t * h_{t-1} + x_t
+    """
+    B, H, T, D = x.shape
+    dtype = x.dtype
+
+    h = initial_state.float() if initial_state is not None else x.new_zeros(B, H, D, dtype=torch.float32)
+    outputs = []
+    for t in range(T):
+        h = g[:, :, t].float() * h + x[:, :, t].float()
+        outputs.append(h)
+    o = torch.stack(outputs, dim=2).to(dtype)
+    final_state = h.to(dtype) if output_final_state else None
+    return o, final_state
+
+
 def fused_recurrent_hgrn(
     x: torch.Tensor,
     g: torch.Tensor,
@@ -202,6 +226,8 @@ def fused_recurrent_hgrn(
     Note: Unlike chunk_hgrn which uses exp(g), this uses g directly.
     The caller should pass g after applying sigmoid or appropriate transform.
     
+    Uses Triton kernels on CUDA, falls back to naive PyTorch loop on CPU.
+    
     Args:
         x: Input tensor [B, H, T, D]
         g: Gate tensor [B, H, T, D]
@@ -211,6 +237,8 @@ def fused_recurrent_hgrn(
     Returns:
         Tuple of (output [B, H, T, D], final_state [B, H, D] or None)
     """
+    if not x.is_cuda:
+        return _naive_recurrent_hgrn(x, g, initial_state, output_final_state)
     if initial_state is not None:
         initial_state = initial_state.detach()
     o, final_state = FusedRecurrentHGRNFunction.apply(x, g, initial_state, output_final_state)

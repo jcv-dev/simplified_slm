@@ -293,6 +293,29 @@ class ChunkHGRNFunction(torch.autograd.Function):
         return dx, dg, None, None
 
 
+def _naive_chunk_hgrn(
+    x: torch.Tensor,
+    g: torch.Tensor,
+    initial_state: torch.Tensor = None,
+    output_final_state: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Naive (pure-PyTorch) chunk HGRN for CPU fallback.
+
+    Computes: h_t = exp(g_t) * h_{t-1} + x_t
+    """
+    B, H, T, D = x.shape
+    dtype = x.dtype
+    h = initial_state.float() if initial_state is not None else x.new_zeros(B, H, D, dtype=torch.float32)
+    outputs = []
+    for t in range(T):
+        h = g[:, :, t].float().exp() * h + x[:, :, t].float()
+        outputs.append(h)
+    o = torch.stack(outputs, dim=2).to(dtype)
+    final_state = h.to(dtype) if output_final_state else None
+    return o, final_state
+
+
 def chunk_hgrn(
     x: torch.Tensor,
     g: torch.Tensor,
@@ -304,6 +327,8 @@ def chunk_hgrn(
     
     Computes: h_t = exp(g_t) * h_{t-1} + x_t
     
+    Uses Triton kernels on CUDA, falls back to naive PyTorch loop on CPU.
+    
     Args:
         x: Input tensor [B, H, T, D]
         g: Gate tensor (log-space) [B, H, T, D]
@@ -313,6 +338,8 @@ def chunk_hgrn(
     Returns:
         Tuple of (output [B, H, T, D], final_state [B, H, D] or None)
     """
+    if not x.is_cuda:
+        return _naive_chunk_hgrn(x, g, initial_state, output_final_state)
     if initial_state is not None:
         initial_state = initial_state.detach()
     o, final_state = ChunkHGRNFunction.apply(x, g, initial_state, output_final_state)
