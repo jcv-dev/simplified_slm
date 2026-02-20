@@ -154,6 +154,14 @@ class HNetBitConfig(PretrainedConfig):
         self.share_conv_kernel = share_conv_kernel
         self.use_lower_bound = use_lower_bound
 
+        # Total layer count for transformers compatibility (e.g. DynamicCache)
+        self.num_hidden_layers = sum(
+            (b[0] + b[2]) if len(b) == 3 else b[0]
+            for b in num_blocks
+        )
+        # Also expose hidden_size as the outermost d_model for transformers
+        self.hidden_size = d_model[0]
+
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
@@ -680,6 +688,17 @@ class HNetBitForCausalLM(HNetBitPreTrainedModel, GenerationMixin):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         """Allocate hierarchical cache for generation."""
         return self.backbone.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype)
+
+    def _prepare_cache_for_generation(self, generation_config, model_kwargs, *args, **kwargs):
+        """Override to use HNetBitCache instead of DynamicCache."""
+        if model_kwargs.get('past_key_values') is None:
+            # Allocate our hierarchical cache
+            batch_size = model_kwargs['input_ids'].shape[0] if 'input_ids' in model_kwargs else 1
+            model_kwargs['past_key_values'] = self.allocate_inference_cache(
+                batch_size,
+                self.config.max_position_embeddings,
+                dtype=model_kwargs['input_ids'].dtype if 'input_ids' in model_kwargs else None,
+            )
 
     def generate(self, *args, **kwargs):
         """Generate with error handling for unsupported strategies."""
