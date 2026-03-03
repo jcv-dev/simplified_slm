@@ -25,7 +25,8 @@ import torch.nn as nn
 from einops import rearrange
 from transformers.cache_utils import Cache
 
-from simplified_slm.ops.bitnet import BitLinear, RMSNorm
+from simplified_slm.ops.fusedbitnet import FusedBitLinear as BitLinear
+from simplified_slm.ops.bitnet import RMSNorm
 from simplified_slm.ops.activations import swiglu
 from simplified_slm.ops.fused_norm_gate import FusedRMSNormSwishGate
 from simplified_slm.ops.hgrn import fused_recurrent_hgrn
@@ -68,7 +69,7 @@ class HGRNBitAttention(nn.Module):
         share_conv_kernel: bool = True,
         layernorm_eps: float = 1e-5,
         layer_idx: int = None
-    ) -> HGRNBitAttention:
+    ) -> None:
         super().__init__()
 
         self.mode = mode
@@ -207,7 +208,7 @@ class HGRNBitMLP(nn.Module):
         hidden_ratio: Optional[int] = None,
         intermediate_size: Optional[int] = None,
         hidden_act: str = 'swish'
-    ) -> HGRNBitMLP:
+    ) -> None:
         super().__init__()
 
         self.hidden_size = hidden_size
@@ -247,11 +248,11 @@ class HGRNBitBlock(nn.Module):
     """
     Transformer-like block with HGRN attention and MLP.
     
-    Architecture:
+    Architecture (prenorm residual stream, matching original matmulfreellm):
         residual = x
         x = attn_norm(x)
-        x = attn(x) + residual
-        x, residual = mlp_norm(x, residual, prenorm=True)
+        x = attn(x)
+        x, residual = mlp_norm(x, residual, prenorm=True)  # fused add + norm
         x = mlp(x) + residual
     
     Args:
@@ -310,7 +311,7 @@ class HGRNBitBlock(nn.Module):
         Returns:
             Tuple of (hidden_states, attentions, cache)
         """
-        # Attention with residual
+        # Attention with pre-normalization
         residual = hidden_states
         hidden_states = self.attn_norm(hidden_states)
         hidden_states, attentions, past_key_values = self.attn(
@@ -321,10 +322,9 @@ class HGRNBitBlock(nn.Module):
             output_attentions=output_attentions,
             lower_bound=lower_bound
         )
-        hidden_states = hidden_states + residual
-        
-        # MLP with residual (using prenorm pattern)
-        hidden_states, residual = self.mlp_norm(hidden_states, residual=None, prenorm=False), hidden_states
+        # MLP with fused residual prenorm (matches original matmulfreellm):
+        # mlp_norm adds attn output to residual, normalizes, returns (normed, sum)
+        hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 

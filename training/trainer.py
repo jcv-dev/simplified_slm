@@ -189,8 +189,8 @@ class Trainer:
                 ce_loss = outputs.loss
                 
                 # Add load balancing loss for hierarchical models
-                if self.use_load_balancing and outputs.hidden_states:
-                    lb_loss = self.compute_load_balancing_loss(outputs.hidden_states)
+                if self.use_load_balancing and getattr(outputs, 'router_outputs', None):
+                    lb_loss = self.compute_load_balancing_loss(outputs.router_outputs)
                     total_loss = ce_loss + self.lambda_lb * lb_loss
                 else:
                     total_loss = ce_loss

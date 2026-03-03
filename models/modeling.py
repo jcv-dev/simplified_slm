@@ -31,7 +31,8 @@ from transformers.utils import logging
 
 from simplified_slm.models.config import SimplifiedSLMConfig
 from simplified_slm.layers.hgrn_bit import HGRNBitBlock
-from simplified_slm.ops.bitnet import BitLinear, RMSNorm
+from simplified_slm.ops.fusedbitnet import FusedBitLinear as BitLinear
+from simplified_slm.ops.bitnet import RMSNorm
 from simplified_slm.utils.cache import RecurrentCache
 
 
@@ -397,8 +398,6 @@ class SimplifiedSLMForCausalLM(SimplifiedSLMPreTrainedModel, GenerationMixin):
         
         for name, param in self.named_parameters():
             if 'weight' in name and param.dim() >= 2:
-                from simplified_slm.ops.bitnet import weight_quant
-                w_quant = weight_quant(param.data)
                 scale = 1.0 / param.data.abs().mean().clamp_(min=1e-5)
                 w_ternary = (param.data * scale).round().clamp_(-1, 1)
                 

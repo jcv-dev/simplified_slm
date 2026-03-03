@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Dynamic Chunking module with ternary weights.
+Dynamic Chunking module for hierarchical sequence processing.
 
-Adapted from H-Net's dc.py, replacing nn.Linear projections with BitLinear
-for ternary weight quantization. Cosine similarity computation stays in FP32
-for numerical stability.
+Adapted from H-Net's dc.py.  Routing uses full-precision nn.Linear projections
+(matching the original) since cosine-similarity boundary prediction is sensitive
+to quantization noise.  DeChunkLayer EMA uses the Triton-accelerated
+fused_recurrent_hgrn kernel (with CPU fallback) instead of a sequential loop.
 
 Components:
-- RoutingModuleBit: Predicts chunk boundaries via cosine similarity (BitLinear projections)
+- RoutingModuleBit: Predicts chunk boundaries via cosine similarity (nn.Linear projections)
 - ChunkLayer: Groups tokens into variable-length chunks based on boundaries
-- DeChunkLayer: Reconstructs full sequence from chunk representations using EMA
+- DeChunkLayer: Reconstructs full sequence from chunk representations using parallel EMA
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from simplified_slm.ops.bitnet import BitLinear
+from simplified_slm.ops.hgrn import fused_recurrent_hgrn
 
 
 @dataclass
@@ -64,24 +65,29 @@ class DeChunkState:
 
 class RoutingModuleBit(nn.Module):
     """
-    Predicts chunk boundaries using cosine similarity with BitLinear projections.
+    Predicts chunk boundaries using cosine similarity with full-precision projections.
     
     Computes boundary probability between consecutive tokens:
         boundary_prob = (1 - cos_sim(q_proj(h_t), k_proj(h_{t+1}))) / 2
     
     High boundary probability indicates semantic dissimilarity → chunk boundary.
+    Uses nn.Linear (not BitLinear) to avoid quantization noise in boundary
+    decisions, matching the original H-Net implementation.
     
     Args:
         d_model: Hidden dimension
+        device: Device for parameter allocation
+        dtype: Dtype for parameter allocation
     """
 
     def __init__(self, d_model: int, device=None, dtype=None):
         super().__init__()
         self.d_model = d_model
+        factory_kwargs = {"device": device, "dtype": dtype}
         
-        # BitLinear projections for cosine similarity (ternary weights)
-        self.q_proj_layer = BitLinear(d_model, d_model, bias=False)
-        self.k_proj_layer = BitLinear(d_model, d_model, bias=False)
+        # Full-precision projections for cosine similarity (matching original H-Net dc.py)
+        self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, **factory_kwargs)
+        self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, **factory_kwargs)
 
         # Initialize to near-identity for stable training start
         with torch.no_grad():
@@ -299,8 +305,11 @@ class DeChunkLayer(nn.Module):
     Reconstructs full sequence from chunk representations using EMA.
     
     Uses exponential moving average to propagate chunk information to all
-    positions between boundaries. Implemented as a simple sequential EMA
-    (no Mamba2 dependency).
+    positions between boundaries. The EMA is computed via fused_recurrent_hgrn
+    (Triton-accelerated parallel scan on GPU, sequential fallback on CPU),
+    which maps the EMA recurrence to an equivalent HGRN recurrence:
+        EMA:  out_t = p_t * x_t + (1 - p_t) * out_{t-1}
+        HGRN: h_t   = g_t * h_{t-1} + x_t   with g = (1-p), x = p * hidden
     
     Args:
         d_model: Hidden dimension
@@ -329,9 +338,11 @@ class DeChunkLayer(nn.Module):
         """
         Reconstruct full sequence from chunked representations.
         
-        Uses EMA: out_t = p_t * chunk_t + (1 - p_t) * out_{t-1}
-        where p_t is the boundary probability. At boundaries, the chunk
-        value dominates; between boundaries, previous values are carried forward.
+        Runs EMA on the M boundary tokens only, then broadcasts back to all
+        L positions via plug_back_idx (matching H-Net dc.py semantics).
+        
+        EMA: out_t = p_t * chunk_t + (1 - p_t) * out_{t-1}
+        where p_t is the boundary probability at each chunk position.
         
         Args:
             hidden_states: Chunked representations (B, M, D)
@@ -344,36 +355,41 @@ class DeChunkLayer(nn.Module):
             Reconstructed sequence (B, L, D)
         """
         B, L = boundary_mask.shape
+        M = hidden_states.shape[1]
         D = hidden_states.shape[-1]
         device = hidden_states.device
         original_dtype = hidden_states.dtype
 
-        # Map each position to its corresponding chunk index
+        # Extract boundary probabilities for the M boundary tokens only.
+        # Use the same argsort trick as ChunkLayer to select boundary probs.
+        p_all = torch.clamp(boundary_prob[..., -1].float(), min=1e-4, max=1 - 1e-4)  # (B, L)
+
+        token_idx = (
+            torch.arange(L, device=device)[None, :] + (~boundary_mask).long() * L
+        )
+        seq_sorted_indices = torch.argsort(token_idx, dim=1)
+
+        p = torch.gather(p_all, dim=1, index=seq_sorted_indices[:, :M])  # (B, M)
+
+        # Parallel EMA via fused_recurrent_hgrn (Triton on GPU, naive loop on CPU).
+        # EMA: out_t = p_t * x_t + (1-p_t) * out_{t-1}
+        # Maps to HGRN: h_t = g_t * h_{t-1} + x_t  with  g=(1-p), x=p*hidden.
+        if M > 0:
+            p_expanded = p.unsqueeze(-1)  # (B, M, 1)
+            x_hgrn = (p_expanded * hidden_states.float()).unsqueeze(1)  # (B, 1, M, D)
+            g_hgrn = (1 - p_expanded).expand(-1, -1, D).unsqueeze(1)  # (B, 1, M, D)
+            ema_out, _ = fused_recurrent_hgrn(x_hgrn, g_hgrn)  # (B, 1, M, D)
+            ema_out = ema_out.squeeze(1)  # (B, M, D)
+        else:
+            ema_out = hidden_states.float()
+
+        # Broadcast EMA output back to all L positions via plug_back_idx.
         plug_back_idx = torch.cumsum(boundary_mask, dim=1) - 1  # (B, L)
-        
-        # Gather chunk representations for all positions
-        expanded = torch.gather(
-            hidden_states,
+        out = torch.gather(
+            ema_out,
             dim=1,
             index=plug_back_idx.unsqueeze(-1).expand(-1, -1, D),
         )  # (B, L, D)
-
-        # EMA mixing weights from boundary probabilities
-        p = torch.clamp(boundary_prob[..., -1].float(), min=1e-4, max=1 - 1e-4)  # (B, L)
-
-        # Sequential EMA: out_t = p_t * expanded_t + (1 - p_t) * out_{t-1}
-        # Use list + stack to avoid in-place ops that break autograd
-        steps = []
-        prev = torch.zeros(B, D, device=device, dtype=torch.float32)
-        for t in range(L):
-            if t == 0:
-                cur = expanded[:, t].float()
-            else:
-                cur = p[:, t].unsqueeze(-1) * expanded[:, t].float() + \
-                      (1 - p[:, t].unsqueeze(-1)) * prev
-            steps.append(cur)
-            prev = cur
-        out = torch.stack(steps, dim=1)  # (B, L, D)
 
         if inference_params is not None:
             inference_params.last_value.copy_(out[:, -1].to(original_dtype))

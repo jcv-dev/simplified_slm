@@ -24,7 +24,7 @@ class RecurrentCache(Cache):
     def __init__(
         self,
         seen_tokens: int = 0
-    ) -> RecurrentCache:
+    ) -> None:
         self.states: List[Tuple[torch.Tensor, ...]] = []
         self._seen_tokens = seen_tokens
 

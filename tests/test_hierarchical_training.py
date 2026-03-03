@@ -166,7 +166,8 @@ class TestLoadBalancingLoss:
         )
         
         # Create dataset with enough data
-        dataset = ByteLevelDataset([b"test " * 100 for _ in range(10)], max_seq_length=64)
+        data = torch.randint(0, 256, (10000,), dtype=torch.long)
+        dataset = ByteLevelDataset(data, max_seq_length=64)
         trainer = Trainer(model, training_config, dataset)
         
         # Create mock router output
@@ -200,7 +201,8 @@ class TestLoadBalancingLoss:
         )
         
         # Create dataset with enough data
-        dataset = ByteLevelDataset([b"test " * 100 for _ in range(10)], max_seq_length=64)
+        data = torch.randint(0, 256, (10000,), dtype=torch.long)
+        dataset = ByteLevelDataset(data, max_seq_length=64)
         trainer = Trainer(model, training_config, dataset)
         
         lb_loss = trainer.compute_load_balancing_loss([])
@@ -222,7 +224,8 @@ class TestLoadBalancingLoss:
         )
         
         # Create dataset with enough data
-        dataset = ByteLevelDataset([b"test " * 100 for _ in range(10)], max_seq_length=64)
+        data = torch.randint(0, 256, (10000,), dtype=torch.long)
+        dataset = ByteLevelDataset(data, max_seq_length=64)
         trainer = Trainer(model, training_config, dataset)
         
         # Create multiple router outputs

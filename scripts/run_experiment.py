@@ -31,9 +31,6 @@ from simplified_slm.training import (
     TrainingConfig,
     Trainer,
     TrainingLogger,
-    collate_fn,
-    build_optimizer,
-    build_scheduler,
 )
 from simplified_slm.training.data import ByteLevelDataset
 from simplified_slm.training.evaluator import Evaluator, EvaluatorConfig
@@ -101,30 +98,15 @@ def build_model(config: dict, device: str = 'cuda'):
 
 def setup_training(config: dict, model, train_dataset, val_dataset, device: str):
     """Setup training components."""
-    from torch.utils.data import DataLoader
-    
     train_config = config["training"]
     output_config = config["output"]
     
-    # Create dataloaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=train_config.get("batch_size", 16),
-        shuffle=True,
-        collate_fn=collate_fn,
-        num_workers=config.get("hardware", {}).get("num_workers", 0),
-        pin_memory=True,
-    )
+    # Parse mixed_precision string into bf16/fp16 bools
+    mixed_precision = train_config.get("mixed_precision", "bf16")
+    use_bf16 = (mixed_precision == "bf16")
+    use_fp16 = (mixed_precision == "fp16")
     
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=train_config.get("batch_size", 16),
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=0,
-    )
-    
-    # Training config
+    # Training config (field names must match TrainingConfig dataclass)
     training_config = TrainingConfig(
         learning_rate=train_config.get("learning_rate", 3e-4),
         weight_decay=train_config.get("weight_decay", 0.01),
@@ -132,23 +114,24 @@ def setup_training(config: dict, model, train_dataset, val_dataset, device: str)
         gradient_accumulation_steps=train_config.get("gradient_accumulation_steps", 1),
         max_steps=train_config.get("max_steps", 10000),
         warmup_steps=train_config.get("warmup_steps", 500),
-        scheduler_type=train_config.get("scheduler", "cosine"),
+        lr_scheduler=train_config.get("scheduler", "cosine"),
         max_grad_norm=train_config.get("max_grad_norm", 1.0),
         eval_interval=train_config.get("eval_interval", 500),
         save_interval=train_config.get("save_interval", 1000),
         log_interval=train_config.get("log_interval", 50),
-        mixed_precision=train_config.get("mixed_precision", "bf16"),
-        checkpoint_dir=output_config.get("checkpoint_dir", "./checkpoints"),
+        bf16=use_bf16,
+        fp16=use_fp16,
+        output_dir=output_config.get("checkpoint_dir", "./checkpoints"),
+        # Hierarchical training params (optional)
+        lr_multipliers=train_config.get("lr_multipliers", None),
+        lambda_lb=train_config.get("lambda_lb", 0.0),
+        downsampling_factor=train_config.get("downsampling_factor", 2.5),
     )
     
     # Create directories
-    Path(training_config.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    Path(training_config.output_dir).mkdir(parents=True, exist_ok=True)
     log_dir = Path(output_config.get("log_dir", "./logs"))
     log_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Build optimizer and scheduler
-    optimizer = build_optimizer(model, training_config)
-    scheduler = build_scheduler(optimizer, training_config)
     
     # Logger
     logger = TrainingLogger(
@@ -157,16 +140,13 @@ def setup_training(config: dict, model, train_dataset, val_dataset, device: str)
         use_wandb=False,  # Set to True if you want wandb logging
     )
     
-    # Trainer
+    # Trainer builds its own optimizer/scheduler from config internally
     trainer = Trainer(
         model=model,
-        train_dataloader=train_loader,
-        val_dataloader=val_loader,
-        optimizer=optimizer,
-        scheduler=scheduler,
         config=training_config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
         logger=logger,
-        device=device,
     )
     
     return trainer, training_config
@@ -198,6 +178,7 @@ def run_training(trainer: Trainer, config: dict) -> str:
 def run_evaluation(model_path: str, config: dict, test_dataset, device: str):
     """Run evaluation on trained model."""
     from torch.utils.data import DataLoader
+    from simplified_slm.training.data import collate_fn
     
     print("\n" + "=" * 60)
     print("Running Evaluation")

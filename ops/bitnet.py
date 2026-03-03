@@ -81,15 +81,17 @@ class RMSNorm(nn.Module):
         """
         if residual is not None:
             x = x + residual
-            residual_out = x
-        
+
+        # Save pre-norm value for prenorm residual stream
+        input_for_residual = x
+
         # RMSNorm: x * rsqrt(mean(x^2) + eps) * weight
         variance = x.pow(2).mean(-1, keepdim=True)
         x = x * torch.rsqrt(variance + self.eps)
         output = self.weight * x
-        
-        if prenorm and residual is not None:
-            return output, residual_out
+
+        if prenorm:
+            return output, input_for_residual
         return output
 
 

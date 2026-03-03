@@ -71,7 +71,7 @@ def build_datasets(config: TrainingConfig, max_seq_length: int):
 
     if config.data_path and os.path.exists(config.data_path):
         print(f"Loading data from {config.data_path}")
-        full_ds = TextFileDataset(config.data_path, seq_length=max_seq_length)
+        full_ds = TextFileDataset(config.data_path, max_seq_length=max_seq_length)
         
         # 90/10 split
         n = len(full_ds)
@@ -82,12 +82,12 @@ def build_datasets(config: TrainingConfig, max_seq_length: int):
         val_ds = torch.utils.data.Subset(full_ds, range(n_train, n))
     else:
         print("No data_path found — using synthetic data for testing")
-        data = create_synthetic_data(num_tokens=max_seq_length * 500)
+        data = create_synthetic_data(num_bytes=max_seq_length * 500)
         train_tokens = data[:int(len(data) * 0.9)]
         val_tokens = data[int(len(data) * 0.9):]
         
-        train_ds = ByteLevelDataset(train_tokens, seq_length=max_seq_length)
-        val_ds = ByteLevelDataset(val_tokens, seq_length=max_seq_length)
+        train_ds = ByteLevelDataset(train_tokens, max_seq_length=max_seq_length)
+        val_ds = ByteLevelDataset(val_tokens, max_seq_length=max_seq_length)
     
     print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}")
     return train_ds, val_ds
@@ -128,14 +128,17 @@ def main():
         config = TrainingConfig()
     
     # CLI overrides
-    for key in ['output_dir', 'data_path', 'max_steps', 'batch_size', 'lr',
+    for key in ['output_dir', 'data_path', 'max_steps', 'batch_size',
                 'max_seq_length', 'resume_from', 'seed', 'bf16', 'fp16']:
         val = getattr(args, key, None)
         if val is not None:
             setattr(config, key, val)
+    # Map --lr to learning_rate
+    if args.lr is not None:
+        config.learning_rate = args.lr
     
     # Defaults
-    if config.output_dir == "runs/experiment":
+    if config.output_dir == "./checkpoints":
         config.output_dir = f"runs/{args.model_type}_experiment"
     
     # Seed
@@ -151,6 +154,11 @@ def main():
     
     # Build model
     model = build_model(args.model_type, args.model_config, device)
+    
+    # Apply per-stage learning rate multipliers for hierarchical models
+    if args.model_type == "hierarchical" and config.lr_multipliers is not None:
+        print(f"Applying LR multipliers: {config.lr_multipliers}")
+        model.backbone._apply_lr_multiplier(config.lr_multipliers)
     
     # Build datasets
     max_seq_length = config.max_seq_length

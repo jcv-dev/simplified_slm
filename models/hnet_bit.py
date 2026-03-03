@@ -41,7 +41,8 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
 
 from simplified_slm.layers.hgrn_bit import HGRNBitBlock
-from simplified_slm.ops.bitnet import BitLinear, RMSNorm
+from simplified_slm.ops.fusedbitnet import FusedBitLinear as BitLinear
+from simplified_slm.ops.bitnet import RMSNorm
 from simplified_slm.ops.dynamic_chunking import (
     RoutingModuleBit,
     RoutingModuleOutput,
@@ -51,6 +52,22 @@ from simplified_slm.ops.dynamic_chunking import (
 from simplified_slm.utils.hnet_cache import HGRNBlockCache, HNetBitCache
 
 logger = logging.get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Custom output with router_outputs
+# ---------------------------------------------------------------------------
+@dataclass
+class HNetBitCausalLMOutput(CausalLMOutputWithPast):
+    """
+    Extends CausalLMOutputWithPast with a dedicated field for routing outputs
+    from the hierarchical boundary prediction modules.
+    
+    Attributes:
+        router_outputs: List of RoutingModuleOutput from each hierarchy stage,
+                        used for computing load-balancing loss during training.
+    """
+    router_outputs: Optional[List[RoutingModuleOutput]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +186,25 @@ class HNetBitConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
+
+        # Validate configuration consistency
+        if len(self.d_model) != len(self.num_blocks):
+            raise ValueError(
+                f"d_model has {len(self.d_model)} stages but num_blocks has "
+                f"{len(self.num_blocks)} entries. They must match."
+            )
+        for i, blocks in enumerate(self.num_blocks):
+            is_innermost = (i == len(self.d_model) - 1)
+            if is_innermost and len(blocks) not in (1, 3):
+                raise ValueError(
+                    f"Innermost stage {i} num_blocks must have 1 or 3 elements, "
+                    f"got {len(blocks)}."
+                )
+            if not is_innermost and len(blocks) != 3:
+                raise ValueError(
+                    f"Non-innermost stage {i} num_blocks must have 3 elements "
+                    f"[encoder, unused, decoder], got {len(blocks)}."
+                )
 
     def _make_stage_config(self, stage_idx: int):
         """Create a config-like object for HGRNBitBlock at a given stage."""
@@ -551,12 +587,20 @@ class HNetBit(nn.Module):
             inference_params=dechunk_state,
         )
 
+        # Ensure shapes match for residual
+        if hidden_states.shape != residual.shape:
+            # This shouldn't happen if dechunk is correct, but add safety check
+            raise RuntimeError(
+                f"Shape mismatch in residual: hidden_states={hidden_states.shape}, "
+                f"residual={residual.shape}"
+            )
+
         # Residual connection with STE
         hidden_states = self.residual_func(
             hidden_states.to(dtype=residual.dtype),
             residual,
             bpred_output.selected_probs,
-        ).to(next_hidden_states.dtype)
+        ).to(next_hidden_states.dtype if next_hidden_states.shape[0] > 0 else hidden_states.dtype)
 
         # Decoder
         dec_cache = inference_params.decoder_cache if inference_params is not None else None
@@ -660,7 +704,7 @@ class HNetBitPreTrainedModel(PreTrainedModel):
         super().__init__(*inputs, **kwargs)
 
     def _init_weights(self, module: nn.Module):
-        """Initialize weights with H-Net-style scaling."""
+        """Initialize weights with H-Net-style scaling and prenorm residual rescaling."""
         if isinstance(module, (nn.Linear, BitLinear)):
             if not getattr(module.weight, '_no_reinit', False):
                 nn.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
@@ -670,6 +714,13 @@ class HNetBitPreTrainedModel(PreTrainedModel):
             nn.init.normal_(module.weight, mean=0.0, std=1.0)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
+        # Prenorm residual rescaling (GPT-2 paper, matching matmulfreellm):
+        # Scale o_proj and down_proj weights by 1/sqrt(2 * num_hidden_layers)
+        for name, p in module.named_parameters():
+            if name in ["o_proj.weight", "down_proj.weight"]:
+                with torch.no_grad():
+                    p /= math.sqrt(2 * self.config.num_hidden_layers)
 
 
 # ---------------------------------------------------------------------------
@@ -814,10 +865,16 @@ class HNetBitForCausalLM(HNetBitPreTrainedModel, GenerationMixin):
 
         # Initialize cache for generation
         inference_params = past_key_values
-        if use_cache and inference_params is None:
-            inference_params = self.backbone.allocate_inference_cache(
-                B, L, dtype=hidden_states.dtype,
-            )
+        if use_cache:
+            if inference_params is None:
+                inference_params = self.backbone.allocate_inference_cache(
+                    B, L, dtype=hidden_states.dtype,
+                )
+            elif not isinstance(inference_params, HNetBitCache):
+                # Handle transformers DynamicCache or other cache types
+                inference_params = self.backbone.allocate_inference_cache(
+                    B, L, dtype=hidden_states.dtype,
+                )
 
         # Forward through hierarchical backbone
         if use_cache and inference_params is not None and inference_params.get_seq_length() > 0:
@@ -852,11 +909,11 @@ class HNetBitForCausalLM(HNetBitPreTrainedModel, GenerationMixin):
             output = (logits, inference_params)
             return (loss,) + output if loss is not None else output
 
-        return CausalLMOutputWithPast(
+        return HNetBitCausalLMOutput(
             loss=loss,
             logits=logits,
             past_key_values=inference_params,
-            hidden_states=bpred_outputs if output_hidden_states else None,  # Store router outputs
+            router_outputs=bpred_outputs if output_hidden_states else None,
         )
 
     def count_parameters(self, trainable_only: bool = True) -> int:
@@ -867,7 +924,6 @@ class HNetBitForCausalLM(HNetBitPreTrainedModel, GenerationMixin):
 
     def get_ternary_weight_stats(self) -> dict:
         """Get statistics about ternary weight distribution across the model."""
-        from simplified_slm.ops.bitnet import weight_quant
         stats = {'total_params': 0, 'ternary_params': 0, 'distribution': {-1: 0, 0: 0, 1: 0}}
 
         for name, param in self.named_parameters():

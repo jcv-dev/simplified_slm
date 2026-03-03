@@ -2,7 +2,7 @@
 
 from simplified_slm.models.config import SimplifiedSLMConfig
 from simplified_slm.models.modeling import SimplifiedSLMForCausalLM, SimplifiedSLMModel
-from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM, HNetBit
+from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM, HNetBit, HNetBitCausalLMOutput
 
 __all__ = [
     "SimplifiedSLMConfig",
@@ -11,4 +11,5 @@ __all__ = [
     "HNetBitConfig",
     "HNetBitForCausalLM",
     "HNetBit",
+    "HNetBitCausalLMOutput",
 ]

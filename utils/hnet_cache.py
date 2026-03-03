@@ -100,13 +100,20 @@ class HNetBitCache:
     is_innermost: bool = False
 
     def get_seq_length(self) -> int:
-        """Get the number of tokens processed."""
+        """Get the number of tokens processed at the outermost stage."""
         if self.is_innermost:
             if self.main_network_cache is not None:
                 return self.main_network_cache.seen_tokens
             return 0
-        elif self.encoder_cache is not None:
+        
+        # Always check encoder cache for non-innermost (it's at the input level)
+        if self.encoder_cache is not None:
             return self.encoder_cache.seen_tokens
+        
+        # Fallback to dechunk state if available
+        if self.dechunk_state is not None and hasattr(self.dechunk_state, 'tokens_processed'):
+            return self.dechunk_state.tokens_processed
+        
         return 0
 
     def reorder_cache(self, beam_idx: torch.LongTensor) -> None:
