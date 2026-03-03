@@ -72,9 +72,13 @@ def load_model(
             cfg_dict = checkpoint['config']
             detected_type = cfg_dict.get('model_type', model_type)
             if detected_type == 'hnet_bit':
+                if model_type == 'flat':
+                    print(f"Warning: --model_type=flat but checkpoint is hierarchical. Using hierarchical.")
                 config = HNetBitConfig(**cfg_dict)
                 model_type = 'hierarchical'
             else:
+                if model_type == 'hierarchical':
+                    print(f"Warning: --model_type=hierarchical but checkpoint is flat. Using flat.")
                 config = SimplifiedSLMConfig(**cfg_dict)
                 model_type = 'flat'
         
