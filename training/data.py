@@ -148,3 +148,69 @@ def create_synthetic_data(
     """
     torch.manual_seed(seed)
     return torch.randint(0, vocab_size, (num_bytes,), dtype=torch.long)
+
+
+def pack_sequences(
+    sequences: List[torch.Tensor],
+    max_seq_len: int,
+) -> List[Dict[str, torch.Tensor]]:
+    """
+    Pack variable-length sequences into flat tensors with cu_seqlens.
+    
+    Concatenates sequences greedily into bins up to max_seq_len,
+    producing flat input_ids/labels tensors and cu_seqlens offsets.
+    
+    Args:
+        sequences: List of 1D token tensors (variable lengths)
+        max_seq_len: Maximum total length per packed batch
+        
+    Returns:
+        List of dicts, each with:
+            'input_ids': (T,) flat tensor of packed tokens
+            'labels': (T,) flat tensor of packed labels (shifted by 1)
+            'cu_seqlens': (N+1,) cumulative sequence lengths
+            'attention_mask': None (not needed for packed mode)
+    """
+    packed_batches = []
+    current_ids = []
+    current_labels = []
+    current_cu = [0]
+    current_len = 0
+    
+    for seq in sequences:
+        seq_len = len(seq)
+        if seq_len < 2:
+            continue  # Need at least 2 tokens for input/label
+        
+        # Check if adding this sequence would exceed max_seq_len
+        # We use seq_len - 1 because input is seq[:-1] and label is seq[1:]
+        effective_len = seq_len - 1
+        if current_len + effective_len > max_seq_len and current_len > 0:
+            # Finalize current batch
+            packed_batches.append({
+                'input_ids': torch.cat(current_ids),
+                'labels': torch.cat(current_labels),
+                'cu_seqlens': torch.tensor(current_cu, dtype=torch.long),
+                'attention_mask': None,
+            })
+            current_ids = []
+            current_labels = []
+            current_cu = [0]
+            current_len = 0
+        
+        # Add sequence
+        current_ids.append(seq[:-1])
+        current_labels.append(seq[1:])
+        current_len += effective_len
+        current_cu.append(current_len)
+    
+    # Finalize last batch
+    if current_len > 0:
+        packed_batches.append({
+            'input_ids': torch.cat(current_ids),
+            'labels': torch.cat(current_labels),
+            'cu_seqlens': torch.tensor(current_cu, dtype=torch.long),
+            'attention_mask': None,
+        })
+    
+    return packed_batches

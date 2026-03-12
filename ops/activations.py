@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Activation functions for simplified SLM.
+Activation functions for HNet-Bit.
 
 Includes SwiGLU and other gated activations used in HGRN.
 """

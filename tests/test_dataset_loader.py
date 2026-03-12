@@ -14,7 +14,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from simplified_slm.training.dataset_loader import (
+from hnet_bit.training.dataset_loader import (
     DatasetConfig,
     DatasetStatistics,
     HuggingFaceDataset,
@@ -23,7 +23,7 @@ from simplified_slm.training.dataset_loader import (
     create_train_val_split,
     prepare_datasets,
 )
-from simplified_slm.training.data import ByteLevelDataset
+from hnet_bit.training.data import ByteLevelDataset
 
 
 class TestDatasetConfig:

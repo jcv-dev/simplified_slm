@@ -1,27 +1,42 @@
-# Simplified MatMul-Free SLM with Ternary Weights
+# HNetBit: Hierarchical MatMul-Free Language Model
 
-A minimal implementation of a Small Language Model (SLM) using:
+A hierarchical language model combining H-Net's multi-stage architecture with MatMul-free ternary weights:
 - **BitLinear** layers with ternary weight quantization ({-1, 0, +1})
 - **HGRN** (Hierarchical Gated Recurrent Network) for efficient sequence modeling
+- **Multi-stage hierarchical** architecture with dynamic chunking
 - **Chunk-parallel** recurrence for fast training
 - **Byte-level tokenization** (vocab_size=256)
 
 ## Architecture
 
 ```
-Embedding (256 → hidden_size)
+Embedding (256 → d_model[0])
     ↓
-N × HGRNBitBlock:
-    ├── RMSNorm → HGRNBitAttention → Residual
-    └── RMSNorm → HGRNBitMLP (SwiGLU) → Residual
+Stage 0 Encoder (N × HGRNBitBlock)
     ↓
-RMSNorm
+ChunkLayer (dynamic downsampling)
     ↓
-BitLinear LM Head (hidden_size → 256)
+Stage 1 Encoder (M × HGRNBitBlock)
+    ↓
+ChunkLayer
+    ↓
+Innermost Stage (K × HGRNBitBlock)
+    ↓
+DeChunkLayer
+    ↓
+Stage 1 Decoder (M × HGRNBitBlock)
+    ↓
+DeChunkLayer
+    ↓
+Stage 0 Decoder (N × HGRNBitBlock)
+    ↓
+BitLinear LM Head (d_model[0] → 256)
 ```
 
 ### Key Features
 
+- **Hierarchical Processing**: Multi-stage architecture with learned compression
+- **Dynamic Chunking**: Cosine-similarity based adaptive downsampling
 - **Ternary Weights**: All linear layers use weights quantized to {-1, 0, +1}
 - **No MatMul**: Ternary weights enable efficient addition-based computation
 - **Linear Complexity**: HGRN has O(n) complexity vs O(n²) for attention
@@ -34,24 +49,19 @@ BitLinear LM Head (hidden_size → 256)
 pip install torch transformers triton==2.2 einops
 
 # Install package
-cd simplified-slm
+cd hnet_bit
 pip install -e .
 ```
 
 ## Quick Start
 
 ```python
-from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
-from simplified_slm.utils import ByteTokenizer
+from hnet_bit.models import HNetBitConfig, HNetBitForCausalLM
+from hnet_bit.utils import ByteTokenizer
 
-# Create model
-config = SimplifiedSLMConfig(
-    vocab_size=256,
-    hidden_size=512,
-    num_hidden_layers=6,
-    num_heads=1,
-)
-model = SimplifiedSLMForCausalLM(config).cuda()
+# Create hierarchical model
+config = HNetBitConfig.small_1stage()  # or .small_2stage()
+model = HNetBitForCausalLM(config).cuda()
 
 # Tokenize
 tokenizer = ByteTokenizer()
@@ -66,24 +76,22 @@ print(tokenizer.decode(output[0].tolist()))
 
 ## Model Configurations
 
-| Config | Hidden | Layers | Params |
-|--------|--------|--------|--------|
-| Small  | 256    | 4      | ~10M   |
-| Base   | 512    | 6      | ~50M   |
-| Large  | 768    | 12     | ~100M  |
+| Config | Stages | d_model | Blocks | Params |
+|--------|--------|---------|--------|--------|
+| Small 1-stage  | 1 | [512, 768] | [[4, 0, 4], [8]] | ~50M   |
+| Small 2-stage  | 2 | [512, 768, 1024] | [[4, 0, 4], [4, 0, 4], [8]] | ~100M  |
+| Large 2-stage  | 2 | [1024, 1536, 2048] | [[6, 0, 6], [6, 0, 6], [12]] | ~350M  |
 
 ```python
 # Use preset configs
-config = SimplifiedSLMConfig.small()  # or .base() or .large()
+config = HNetBitConfig.small_1stage()  # or .small_2stage()
 ```
 
 ## Project Structure
 
 ```
-simplified-slm/
+hnet_bit/
 ├── models/
-│   ├── config.py           # SimplifiedSLMConfig
-│   ├── modeling.py         # SimplifiedSLMForCausalLM
 │   └── hnet_bit.py         # HNetBit hierarchical model
 ├── layers/
 │   └── hgrn_bit.py         # HGRNBitAttention, HGRNBitMLP, HGRNBitBlock
@@ -115,10 +123,10 @@ simplified-slm/
 │   ├── analyze_training.py     # Training analysis
 │   └── run_experiment.py       # End-to-end pipeline
 ├── configs/
-│   ├── slm_base.json                   # Flat model config
+│   ├── hnet_bit_1stage.json            # 1-stage hierarchical
 │   ├── hnet_bit_2stage.json            # 2-stage hierarchical
-│   ├── training_2stage_tinystories.json # 2-stage training config
-│   └── training_flat_tinystories.json  # Flat training config
+│   ├── training_1stage_tinystories.json # 1-stage training config
+│   └── training_2stage_tinystories.json # 2-stage training config
 ├── tests/
 │   ├── test_model.py           # Model tests
 │   ├── test_dataset_loader.py  # Dataset loader tests
@@ -164,7 +172,7 @@ Uses Triton kernels for parallelized recurrence computation:
 ## Running Tests
 
 ```bash
-cd simplified-slm
+cd hnet_bit
 python -m pytest tests/ -v
 
 # Or run directly
@@ -196,7 +204,9 @@ Full training infrastructure is now available! See [docs/TRAINING_GUIDE.md](docs
 python scripts/prepare_tinystories.py --output_dir ./data/tinystories
 
 # 2. Train 2-stage hierarchical model
-python train.py --config configs/training_2stage_tinystories.json
+python train.py \
+    --model_config configs/hnet_bit_2stage.json \
+    --training_config configs/training_2stage_tinystories.json
 
 # 3. Evaluate model
 python scripts/evaluate_model.py --checkpoint ./checkpoints/best_model.pt --dataset tinystories
@@ -227,10 +237,10 @@ python scripts/run_experiment.py --config configs/training_2stage_tinystories.js
 |------------|-------------|-------------|
 | 2-Stage Hierarchical | `training_2stage_tinystories.json` | Full hierarchical with dynamic chunking |
 | 1-Stage Hierarchical | `training_1stage_tinystories.json` | Single hierarchy level |
-| Flat Baseline | `training_flat_tinystories.json` | Standard flat model for comparison |
 
 ## References
 
+- [H-Net Paper](https://arxiv.org/abs/2410.06687) - Hierarchical dynamic chunking architecture
 - [MatMul-Free LM](https://github.com/ridgerchu/matmulfreellm) - Original BitLinear and HGRN implementation
 - [HGRN2 Paper](https://arxiv.org/abs/2404.07904) - Gated Linear RNNs with State Expansion
 - [BitNet Paper](https://arxiv.org/abs/2310.11453) - Scaling 1-bit Transformers

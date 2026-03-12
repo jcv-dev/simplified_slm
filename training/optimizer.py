@@ -13,7 +13,7 @@ import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
-from simplified_slm.training.config import TrainingConfig
+from hnet_bit.training.config import TrainingConfig
 
 
 def build_optimizer_hierarchical(

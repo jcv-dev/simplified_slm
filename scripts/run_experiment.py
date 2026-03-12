@@ -24,16 +24,15 @@ import torch
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
-from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
-from simplified_slm.utils import ByteTokenizer
-from simplified_slm.training import (
+from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+from hnet_bit.utils import ByteTokenizer
+from hnet_bit.training import (
     TrainingConfig,
     Trainer,
     TrainingLogger,
 )
-from simplified_slm.training.data import ByteLevelDataset
-from simplified_slm.training.evaluator import Evaluator, EvaluatorConfig
+from hnet_bit.training.data import ByteLevelDataset
+from hnet_bit.training.evaluator import Evaluator, EvaluatorConfig
 
 
 def load_experiment_config(config_path: str) -> dict:
@@ -44,7 +43,7 @@ def load_experiment_config(config_path: str) -> dict:
 
 def prepare_data(config: dict) -> dict:
     """Prepare dataset based on config."""
-    from simplified_slm.scripts.prepare_tinystories import (
+    from hnet_bit.scripts.prepare_tinystories import (
         prepare_tinystories,
         load_prepared_dataset,
     )
@@ -84,13 +83,14 @@ def build_model(config: dict, device: str = 'cuda'):
         model_cfg_dict = model_config.get("params", {})
     
     # Create model
-    model_type = model_config.get("type", "flat")
+    model_type = model_config.get("type", "hnet_bit")
     if model_type == "hnet_bit" or model_cfg_dict.get("model_type") == "hnet_bit":
         cfg = HNetBitConfig(**model_cfg_dict)
         model = HNetBitForCausalLM(cfg)
     else:
-        cfg = SimplifiedSLMConfig(**model_cfg_dict)
-        model = SimplifiedSLMForCausalLM(cfg)
+        # Default to HNetBit
+        cfg = HNetBitConfig(**model_cfg_dict)
+        model = HNetBitForCausalLM(cfg)
     
     model = model.to(device)
     return model, model_cfg_dict
@@ -178,7 +178,7 @@ def run_training(trainer: Trainer, config: dict) -> str:
 def run_evaluation(model_path: str, config: dict, test_dataset, device: str):
     """Run evaluation on trained model."""
     from torch.utils.data import DataLoader
-    from simplified_slm.training.data import collate_fn
+    from hnet_bit.training.data import collate_fn
     
     print("\n" + "=" * 60)
     print("Running Evaluation")
@@ -188,10 +188,8 @@ def run_evaluation(model_path: str, config: dict, test_dataset, device: str):
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     cfg_dict = checkpoint.get("config", {})
     
-    if cfg_dict.get("model_type") == "hnet_bit":
-        model = HNetBitForCausalLM(HNetBitConfig(**cfg_dict))
-    else:
-        model = SimplifiedSLMForCausalLM(SimplifiedSLMConfig(**cfg_dict))
+    # Always use HNetBit
+    model = HNetBitForCausalLM(HNetBitConfig(**cfg_dict))
     
     if "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -317,7 +315,7 @@ Examples:
         datasets = prepare_data(config)
     else:
         print("\n[Step 1] Loading existing data...")
-        from simplified_slm.scripts.prepare_tinystories import load_prepared_dataset
+        from hnet_bit.scripts.prepare_tinystories import load_prepared_dataset
         datasets = load_prepared_dataset(
             config["data"]["data_dir"],
             config["data"].get("max_seq_length"),

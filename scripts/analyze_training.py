@@ -309,17 +309,13 @@ def main():
     # Analyze model weights if provided
     if args.model_path:
         import torch
-        from simplified_slm.models import SimplifiedSLMForCausalLM
-        from simplified_slm.models.hnet_bit import HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
         
         print("\nAnalyzing ternary weights...")
         ckpt = torch.load(args.model_path, map_location='cpu', weights_only=False)
         cfg = ckpt.get('config', {})
         
-        if cfg.get('model_type') == 'hnet_bit':
-            model = HNetBitForCausalLM(HNetBitConfig(**cfg))
-        else:
-            model = SimplifiedSLMForCausalLM(SimplifiedSLMConfig(**cfg))
+        model = HNetBitForCausalLM(HNetBitConfig(**cfg))
         
         if 'model_state_dict' in ckpt:
             model.load_state_dict(ckpt['model_state_dict'])
@@ -351,8 +347,7 @@ def main():
 if __name__ == "__main__":
     # Handle missing imports gracefully
     try:
-        from simplified_slm.models import SimplifiedSLMConfig
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
     except ImportError:
         pass
     

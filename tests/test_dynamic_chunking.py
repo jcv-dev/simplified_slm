@@ -34,7 +34,7 @@ class TestRoutingModuleBit:
 
     def test_forward_shape(self):
         """Test output shapes of RoutingModuleBit forward pass."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         d_model = 128
         module = RoutingModuleBit(d_model)
@@ -56,7 +56,7 @@ class TestRoutingModuleBit:
 
     def test_boundary_prob_range(self):
         """Test that boundary probabilities are in [0, 1] and sum to ~1."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         d_model = 128
         module = RoutingModuleBit(d_model)
@@ -82,7 +82,7 @@ class TestRoutingModuleBit:
 
     def test_first_token_always_boundary(self):
         """Test that the first token is always predicted as a boundary."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         d_model = 128
         module = RoutingModuleBit(d_model)
@@ -99,23 +99,22 @@ class TestRoutingModuleBit:
 
         print(f"✓ First token is always a boundary")
 
-    def test_uses_bitlinear(self):
-        """Test that projections use BitLinear (ternary weights)."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
-        from simplified_slm.ops.bitnet import BitLinear
+    def test_uses_nn_linear(self):
+        """Test that projections use nn.Linear (full-precision for routing stability)."""
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         module = RoutingModuleBit(128)
 
-        assert isinstance(module.q_proj_layer, BitLinear), \
-            "q_proj_layer should be BitLinear"
-        assert isinstance(module.k_proj_layer, BitLinear), \
-            "k_proj_layer should be BitLinear"
+        assert isinstance(module.q_proj_layer, nn.Linear), \
+            "q_proj_layer should be nn.Linear"
+        assert isinstance(module.k_proj_layer, nn.Linear), \
+            "k_proj_layer should be nn.Linear"
 
-        print(f"✓ RoutingModuleBit uses BitLinear projections")
+        print(f"✓ RoutingModuleBit uses nn.Linear projections")
 
     def test_identity_init(self):
         """Test that projections are initialized to near-identity."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         d_model = 64
         module = RoutingModuleBit(d_model)
@@ -131,7 +130,7 @@ class TestRoutingModuleBit:
 
     def test_mask_respected(self):
         """Test that invalid positions (mask=False) are not boundaries."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         d_model = 128
         module = RoutingModuleBit(d_model)
@@ -151,7 +150,7 @@ class TestRoutingModuleBit:
 
     def test_gradient_flow(self):
         """Test gradients flow through RoutingModuleBit."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         d_model = 64
         module = RoutingModuleBit(d_model)
@@ -174,7 +173,7 @@ class TestRoutingModuleBit:
 
     def test_step_mode(self):
         """Test step-by-step inference mode."""
-        from simplified_slm.ops.dynamic_chunking import RoutingModuleBit
+        from hnet_bit.ops.dynamic_chunking import RoutingModuleBit
 
         d_model = 64
         module = RoutingModuleBit(d_model)
@@ -201,7 +200,7 @@ class TestChunkLayer:
 
     def test_forward_shapes(self):
         """Test ChunkLayer output shapes."""
-        from simplified_slm.ops.dynamic_chunking import ChunkLayer
+        from hnet_bit.ops.dynamic_chunking import ChunkLayer
 
         layer = ChunkLayer()
         B, L, D = 2, 32, 64
@@ -212,7 +211,7 @@ class TestChunkLayer:
         boundary_mask = torch.zeros(B, L, dtype=torch.bool)
         boundary_mask[:, ::4] = True
 
-        chunked, chunk_mask = layer(x, boundary_mask, mask=mask)
+        chunked, _, chunk_mask = layer(x, boundary_mask, mask=mask)
 
         expected_M = boundary_mask.sum(dim=-1).max().item()
         assert chunked.shape[0] == B, "Batch size should match"
@@ -226,7 +225,7 @@ class TestChunkLayer:
 
     def test_selects_boundary_tokens(self):
         """Test that ChunkLayer selects exactly the boundary tokens."""
-        from simplified_slm.ops.dynamic_chunking import ChunkLayer
+        from hnet_bit.ops.dynamic_chunking import ChunkLayer
 
         layer = ChunkLayer()
         B, L, D = 1, 8, 4
@@ -239,7 +238,7 @@ class TestChunkLayer:
         boundary_mask = torch.zeros(B, L, dtype=torch.bool)
         boundary_mask[0, [0, 3, 7]] = True
 
-        chunked, chunk_mask = layer(x, boundary_mask, mask=mask)
+        chunked, _, chunk_mask = layer(x, boundary_mask, mask=mask)
 
         # Should get 3 chunks with values 0, 3, 7
         assert chunked.shape == (1, 3, D), f"Expected (1, 3, {D}), got {chunked.shape}"
@@ -252,7 +251,7 @@ class TestChunkLayer:
 
     def test_variable_boundaries_per_batch(self):
         """Test ChunkLayer with different number of boundaries per batch element."""
-        from simplified_slm.ops.dynamic_chunking import ChunkLayer
+        from hnet_bit.ops.dynamic_chunking import ChunkLayer
 
         layer = ChunkLayer()
         B, L, D = 2, 16, 8
@@ -263,7 +262,7 @@ class TestChunkLayer:
         boundary_mask[0, [0, 4, 8]] = True      # 3 boundaries
         boundary_mask[1, [0, 2, 5, 10, 15]] = True  # 5 boundaries
 
-        chunked, chunk_mask = layer(x, boundary_mask, mask=mask)
+        chunked, _, chunk_mask = layer(x, boundary_mask, mask=mask)
 
         # Max chunks = 5
         assert chunked.shape[1] == 5
@@ -275,7 +274,7 @@ class TestChunkLayer:
 
     def test_step_mode(self):
         """Test ChunkLayer step mode (single token)."""
-        from simplified_slm.ops.dynamic_chunking import ChunkLayer
+        from hnet_bit.ops.dynamic_chunking import ChunkLayer
 
         layer = ChunkLayer()
         B = 4
@@ -298,7 +297,7 @@ class TestDeChunkLayer:
 
     def test_forward_shape(self):
         """Test DeChunkLayer output shape matches original sequence length."""
-        from simplified_slm.ops.dynamic_chunking import DeChunkLayer
+        from hnet_bit.ops.dynamic_chunking import DeChunkLayer
 
         d_model = 64
         layer = DeChunkLayer(d_model)
@@ -326,7 +325,7 @@ class TestDeChunkLayer:
 
     def test_boundary_positions_get_chunk_values(self):
         """Test that at boundary positions, output is dominated by chunk values."""
-        from simplified_slm.ops.dynamic_chunking import DeChunkLayer
+        from hnet_bit.ops.dynamic_chunking import DeChunkLayer
 
         d_model = 16
         layer = DeChunkLayer(d_model)
@@ -353,7 +352,7 @@ class TestDeChunkLayer:
 
     def test_ema_smoothing(self):
         """Test that EMA provides smooth interpolation between chunks."""
-        from simplified_slm.ops.dynamic_chunking import DeChunkLayer
+        from hnet_bit.ops.dynamic_chunking import DeChunkLayer
 
         d_model = 8
         layer = DeChunkLayer(d_model)
@@ -390,7 +389,7 @@ class TestDeChunkLayer:
 
     def test_step_mode(self):
         """Test DeChunkLayer step-by-step inference."""
-        from simplified_slm.ops.dynamic_chunking import DeChunkLayer
+        from hnet_bit.ops.dynamic_chunking import DeChunkLayer
 
         d_model = 32
         layer = DeChunkLayer(d_model)
@@ -419,7 +418,7 @@ class TestEndToEndPipeline:
 
     def test_full_pipeline(self):
         """Test complete dynamic chunking pipeline."""
-        from simplified_slm.ops.dynamic_chunking import (
+        from hnet_bit.ops.dynamic_chunking import (
             RoutingModuleBit, ChunkLayer, DeChunkLayer,
         )
 
@@ -437,7 +436,7 @@ class TestEndToEndPipeline:
         routing_out = routing(x, mask=mask)
 
         # 2. Chunk: select boundary tokens
-        chunked, chunk_mask = chunk_layer(x, routing_out.boundary_mask, mask=mask)
+        chunked, _, chunk_mask = chunk_layer(x, routing_out.boundary_mask, mask=mask)
 
         # 3. "Process" chunked (identity for test)
         processed = chunked
@@ -459,7 +458,7 @@ class TestEndToEndPipeline:
 
     def test_pipeline_gradient_flow(self):
         """Test gradients flow through the full pipeline."""
-        from simplified_slm.ops.dynamic_chunking import (
+        from hnet_bit.ops.dynamic_chunking import (
             RoutingModuleBit, ChunkLayer, DeChunkLayer,
         )
 
@@ -474,7 +473,7 @@ class TestEndToEndPipeline:
         mask = torch.ones(B, L, dtype=torch.bool)
 
         routing_out = routing(x, mask=mask)
-        chunked, chunk_mask = chunk_layer(x, routing_out.boundary_mask, mask=mask)
+        chunked, _, chunk_mask = chunk_layer(x, routing_out.boundary_mask, mask=mask)
         reconstructed = dechunk_layer(
             chunked,
             routing_out.boundary_mask,

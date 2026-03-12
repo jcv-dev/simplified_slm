@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Main training loop for SimplifiedSLM and HNetBit models.
+Main training loop for HNetBit models.
 
 Supports:
 - Gradient accumulation
@@ -22,10 +22,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from simplified_slm.training.config import TrainingConfig
-from simplified_slm.training.data import collate_fn
-from simplified_slm.training.optimizer import build_optimizer, build_optimizer_hierarchical, build_scheduler
-from simplified_slm.training.logger import TrainingLogger
+from hnet_bit.training.config import TrainingConfig
+from hnet_bit.training.data import collate_fn
+from hnet_bit.training.optimizer import build_optimizer, build_optimizer_hierarchical, build_scheduler
+from hnet_bit.training.logger import TrainingLogger
 
 
 class Trainer:
@@ -35,7 +35,7 @@ class Trainer:
     Handles gradient accumulation, mixed precision, checkpointing, and evaluation.
     
     Args:
-        model: The language model (SimplifiedSLMForCausalLM or HNetBitForCausalLM)
+        model: The language model (HNetBitForCausalLM)
         config: Training configuration
         train_dataset: Training dataset
         val_dataset: Optional validation dataset
@@ -248,6 +248,15 @@ class Trainer:
                 if self.global_step % self.config.save_interval == 0:
                     self._save_checkpoint(f"step_{self.global_step}")
         
+        # Final evaluation
+        if self.val_loader is not None:
+            val_loss = self.evaluate()
+            self.logger.log_eval({'loss': val_loss}, self.global_step)
+            if val_loss < self.best_val_loss:
+                self.best_val_loss = val_loss
+                self._save_checkpoint("best")
+            self.model.train()
+
         # Final save
         self._save_checkpoint("final")
         self.logger.close()

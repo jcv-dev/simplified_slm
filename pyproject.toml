@@ -3,9 +3,9 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "simplified-slm"
+name = "hnet-bit"
 version = "0.1.0"
-description = "Simplified MatMul-Free Small Language Model with Ternary Weights"
+description = "Hierarchical Network with Ternary Weights (HNet-Bit)"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -42,22 +42,22 @@ dev = [
 ]
 
 [project.scripts]
-slm-generate = "generate:main"
+hnet-bit-generate = "generate:main"
 
 [tool.setuptools]
 packages = [
-    "simplified_slm",
-    "simplified_slm.models",
-    "simplified_slm.layers",
-    "simplified_slm.ops",
-    "simplified_slm.ops.hgrn",
-    "simplified_slm.training",
-    "simplified_slm.utils",
-    "simplified_slm.scripts",
-    "simplified_slm.configs",
-    "simplified_slm.tests",
+    "hnet_bit",
+    "hnet_bit.models",
+    "hnet_bit.layers",
+    "hnet_bit.ops",
+    "hnet_bit.ops.hgrn",
+    "hnet_bit.training",
+    "hnet_bit.utils",
+    "hnet_bit.scripts",
+    "hnet_bit.configs",
+    "hnet_bit.tests",
 ]
-package-dir = {"simplified_slm" = "."}
+package-dir = {"hnet_bit" = "."}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

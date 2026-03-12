@@ -5,7 +5,7 @@ HNetBit: Hierarchical H-Net with ternary BitLinear weights.
 
 Combines H-Net's multi-stage dynamic chunking architecture with MatmulFree's
 ternary weight quantization. Replaces H-Net's Isotropic (Mamba2/Attention)
-blocks with HGRNBitBlocks from simplified_slm.
+blocks with HGRNBitBlocks from hnet_bit.
 
 Architecture (2-stage example):
     Input bytes → Embedding(256, d_model[0])
@@ -40,16 +40,17 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
 
-from simplified_slm.layers.hgrn_bit import HGRNBitBlock
-from simplified_slm.ops.fusedbitnet import FusedBitLinear as BitLinear
-from simplified_slm.ops.bitnet import RMSNorm
-from simplified_slm.ops.dynamic_chunking import (
+from hnet_bit.layers.hgrn_bit import HGRNBitBlock
+from hnet_bit.layers.attention import CausalMHABlock
+from hnet_bit.ops.fusedbitnet import FusedBitLinear as BitLinear
+from hnet_bit.ops.bitnet import RMSNorm
+from hnet_bit.ops.dynamic_chunking import (
     RoutingModuleBit,
     RoutingModuleOutput,
     ChunkLayer,
     DeChunkLayer,
 )
-from simplified_slm.utils.hnet_cache import HGRNBlockCache, HNetBitCache
+from hnet_bit.utils.hnet_cache import HGRNBlockCache, HNetBitCache
 
 logger = logging.get_logger(__name__)
 
@@ -94,7 +95,7 @@ class HNetBitConfig(PretrainedConfig):
     """
     Configuration for Hierarchical HNetBit model.
     
-    Extends SimplifiedSLMConfig concepts to support multi-stage hierarchy.
+    Multi-stage architecture with dynamic chunking and MatMulFree ternary weights.
     
     Args:
         vocab_size: Vocabulary size (256 for byte-level)
@@ -143,6 +144,11 @@ class HNetBitConfig(PretrainedConfig):
         conv_size: int = 4,
         share_conv_kernel: bool = True,
         use_lower_bound: bool = False,
+        # Innermost attention configuration
+        innermost_use_attention: bool = False,
+        attention_window_size: int = 64,
+        attention_num_heads: Optional[int] = None,
+        attention_layers_pattern: Optional[str] = None,
         **kwargs,
     ):
         if d_model is None:
@@ -170,6 +176,10 @@ class HNetBitConfig(PretrainedConfig):
         self.conv_size = conv_size
         self.share_conv_kernel = share_conv_kernel
         self.use_lower_bound = use_lower_bound
+        self.innermost_use_attention = innermost_use_attention
+        self.attention_window_size = attention_window_size
+        self.attention_num_heads = attention_num_heads
+        self.attention_layers_pattern = attention_layers_pattern
 
         # Total layer count for transformers compatibility (e.g. DynamicCache)
         self.num_hidden_layers = sum(
@@ -222,6 +232,9 @@ class HNetBitConfig(PretrainedConfig):
         cfg.use_short_conv = self.use_short_conv
         cfg.conv_size = self.conv_size
         cfg.share_conv_kernel = self.share_conv_kernel
+        cfg.max_position_embeddings = self.max_position_embeddings
+        cfg.attention_window_size = self.attention_window_size
+        cfg.attention_num_heads = self.attention_num_heads
         return cfg
 
     @classmethod
@@ -257,13 +270,18 @@ class HNetBitConfig(PretrainedConfig):
 # ---------------------------------------------------------------------------
 class HGRNBitStack(nn.Module):
     """
-    A stack of HGRNBitBlock layers for encoder/decoder/innermost.
+    A stack of HGRNBitBlock (and optionally CausalMHABlock) layers.
+    
+    When is_innermost=True and config.innermost_use_attention=True, interleaves
+    HGRN and attention blocks according to config.attention_layers_pattern.
+    Pattern is a string of 'x' (HGRN) and 'a' (attention), e.g. "xaxaxaxa".
     
     Args:
         config: HNetBitConfig
         stage_idx: Which hierarchy stage this stack belongs to
         num_layers: Number of blocks in this stack
         layer_idx_offset: Starting layer_idx for cache indexing
+        is_innermost: Whether this is the innermost hierarchy stage
     """
 
     def __init__(
@@ -272,13 +290,33 @@ class HGRNBitStack(nn.Module):
         stage_idx: int,
         num_layers: int,
         layer_idx_offset: int = 0,
+        is_innermost: bool = False,
     ):
         super().__init__()
         stage_cfg = config._make_stage_config(stage_idx)
-        self.layers = nn.ModuleList([
-            HGRNBitBlock(stage_cfg, layer_idx=layer_idx_offset + i)
-            for i in range(num_layers)
-        ])
+
+        # Determine per-layer block types
+        use_attention = is_innermost and getattr(config, 'innermost_use_attention', False)
+        if use_attention:
+            pattern = getattr(config, 'attention_layers_pattern', None)
+            if pattern is None:
+                # Default: alternate starting with HGRN
+                pattern = ''.join('xa'[i % 2] for i in range(num_layers))
+            if len(pattern) < num_layers:
+                # Extend pattern cyclically
+                pattern = (pattern * ((num_layers // len(pattern)) + 1))[:num_layers]
+        else:
+            pattern = 'x' * num_layers
+
+        layers = []
+        for i in range(num_layers):
+            lid = layer_idx_offset + i
+            if pattern[i] == 'a':
+                layers.append(CausalMHABlock(stage_cfg, layer_idx=lid))
+            else:
+                layers.append(HGRNBitBlock(stage_cfg, layer_idx=lid))
+
+        self.layers = nn.ModuleList(layers)
         self.norm = RMSNorm(config.d_model[stage_idx], eps=config.rms_norm_eps)
         self.num_layers = num_layers
         self.d_model = config.d_model[stage_idx]
@@ -398,10 +436,11 @@ class HNetBit(nn.Module):
         self.is_innermost = is_innermost
 
         if is_innermost:
-            # Innermost: just a stack of HGRN blocks
+            # Innermost: stack of HGRN blocks (optionally interleaved with attention)
             n_blocks = config.num_blocks[stage_idx][0]
             self.main_network = HGRNBitStack(
                 config, stage_idx, n_blocks, layer_idx_offset=0,
+                is_innermost=True,
             )
         else:
             # Non-innermost: encoder + routing + chunk + main + dechunk + decoder
@@ -459,7 +498,7 @@ class HNetBit(nn.Module):
             >>> model._apply_lr_multiplier([2.0, 1.5, 1.0])
             >>> # Now outer stage params have _optim={'lr_multiplier': 2.0}
         """
-        from simplified_slm.utils.helpers import apply_optimization_params
+        from hnet_bit.utils.helpers import apply_optimization_params
         
         # Apply LR multiplier to all parameters at this stage
         for param in self.parameters():
@@ -566,7 +605,7 @@ class HNetBit(nn.Module):
         )
 
         # Chunk: select boundary tokens
-        next_hidden_states, next_mask = self.chunk_layer(
+        next_hidden_states, next_cu_seqlens, next_mask = self.chunk_layer(
             hidden_states, bpred_output.boundary_mask, mask=mask,
         )
 

@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
-from simplified_slm.ops.dynamic_chunking import RoutingModuleState, DeChunkState
+from hnet_bit.ops.dynamic_chunking import RoutingModuleState, DeChunkState
 
 
 @dataclass
@@ -50,11 +50,12 @@ class HGRNBlockCache:
             self.states.append(None)
         
         if self.states[layer_idx] is not None:
-            # In-place update to save memory
+            # In-place update to save memory when shapes match,
+            # otherwise replace (needed for growing KV caches in attention)
             updated = []
             for i, s in enumerate(state):
                 old = self.states[layer_idx]
-                if i < len(old) and old[i] is not None:
+                if i < len(old) and old[i] is not None and old[i].shape == s.shape:
                     old[i].copy_(s)
                     updated.append(old[i])
                 else:

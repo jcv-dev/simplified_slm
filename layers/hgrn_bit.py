@@ -9,9 +9,11 @@ Implements:
 - HGRNBitBlock: Combined attention + MLP block
 
 Simplified configuration:
-- use_short_conv=False (no local convolution)
+- use_short_conv=False by default (enable for local inductive bias)
 - use_lower_bound=False (no learned forget gate bounds)
-- num_heads=1, expand_ratio=1 (single head, no expansion)
+
+Supports multi-head HGRN (num_heads > 1), state expansion (expand_ratio > 1),
+and optional short convolution (use_short_conv=True) for local pattern capture.
 
 Adapted from matmulfreellm.
 """
@@ -25,11 +27,16 @@ import torch.nn as nn
 from einops import rearrange
 from transformers.cache_utils import Cache
 
-from simplified_slm.ops.fusedbitnet import FusedBitLinear as BitLinear
-from simplified_slm.ops.bitnet import RMSNorm
-from simplified_slm.ops.activations import swiglu
-from simplified_slm.ops.fused_norm_gate import FusedRMSNormSwishGate
-from simplified_slm.ops.hgrn import fused_recurrent_hgrn
+from hnet_bit.ops.fusedbitnet import FusedBitLinear as BitLinear
+from hnet_bit.ops.bitnet import RMSNorm
+from hnet_bit.ops.activations import swiglu
+from hnet_bit.ops.fused_norm_gate import FusedRMSNormSwishGate
+from hnet_bit.ops.hgrn import fused_recurrent_hgrn
+
+try:
+    from hnet_bit.ops.short_conv import ShortConvolution
+except ImportError:
+    ShortConvolution = None
 
 
 class HGRNBitAttention(nn.Module):
@@ -49,10 +56,10 @@ class HGRNBitAttention(nn.Module):
         hidden_size: Model hidden dimension
         num_heads: Number of attention heads (default 1)
         expand_ratio: State expansion ratio (default 1)
-        use_short_conv: Whether to use short convolution (disabled)
-        conv_size: Convolution kernel size (unused)
-        conv_bias: Whether conv has bias (unused)
-        share_conv_kernel: Whether to share conv kernel (unused)
+        use_short_conv: Whether to use short convolution for local inductive bias
+        conv_size: Convolution kernel size (default 4)
+        conv_bias: Whether conv has bias
+        share_conv_kernel: Whether to share conv kernel (True = one conv, False = three separate)
         layernorm_eps: Epsilon for layer normalization
         layer_idx: Index of this layer in the model
     """
@@ -79,17 +86,33 @@ class HGRNBitAttention(nn.Module):
         self.input_dim = int(hidden_size * expand_ratio)
         self.head_dim = self.input_dim // self.num_heads
 
-        # Simplified: no short convolution
-        self.use_short_conv = False
+        self.use_short_conv = use_short_conv
+        self.conv_size = conv_size
+        self.conv_bias = conv_bias
+        self.share_conv_kernel = share_conv_kernel
         self.layer_idx = layer_idx
 
         assert mode in ['fused_recurrent'], f"Not supported mode `{mode}`."
-        assert self.hidden_size % num_heads == 0, f"hidden size must be divisible by num_heads of {num_heads}"
+        assert self.input_dim % num_heads == 0, f"input_dim ({self.input_dim}) must be divisible by num_heads ({num_heads})"
 
         # Projections with ternary quantization
         self.i_proj = BitLinear(hidden_size, self.input_dim, bias=False)
         self.f_proj = BitLinear(hidden_size, self.input_dim, bias=False)
         self.g_proj = BitLinear(hidden_size, self.input_dim, bias=False)
+
+        # Short convolution for local inductive bias
+        if use_short_conv:
+            if ShortConvolution is None:
+                raise ImportError(
+                    "ShortConvolution could not be imported from hnet_bit.ops.short_conv. "
+                    "Check that the module exists, or set use_short_conv=False."
+                )
+            if share_conv_kernel:
+                self.h_conv1d = ShortConvolution(hidden_size, conv_size, activation='silu')
+            else:
+                self.q_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
+                self.f_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
+                self.i_conv1d = ShortConvolution(self.input_dim, conv_size, activation='silu')
 
         # Output normalization with gating
         self.g_norm = FusedRMSNormSwishGate(self.input_dim, layernorm_eps)
@@ -134,9 +157,23 @@ class HGRNBitAttention(nn.Module):
 
         last_state = past_key_values[self.layer_idx] if use_cache and past_key_values is not None else None
         
-        # Compute projections
-        i = self.i_proj(hidden_states)
-        f = self.f_proj(hidden_states)
+        # Compute projections (with optional short convolution)
+        if self.use_short_conv:
+            conv_state = last_state[0] if last_state is not None else None
+            if self.share_conv_kernel:
+                # Shared conv: convolve hidden_states first, then project
+                hidden_states = self.h_conv1d(hidden_states, conv_state)
+                i = self.i_proj(hidden_states)
+                f = self.f_proj(hidden_states)
+            else:
+                conv_state_i = last_state[2] if last_state is not None else None
+                conv_state_f = last_state[1] if last_state is not None else None
+                # Separate conv: project first, then convolve each stream
+                i = self.i_conv1d(self.i_proj(hidden_states), conv_state_i)
+                f = self.f_conv1d(self.f_proj(hidden_states), conv_state_f)
+        else:
+            i = self.i_proj(hidden_states)
+            f = self.f_proj(hidden_states)
 
         # Forget gate with sigmoid
         f = f.sigmoid()
@@ -166,7 +203,13 @@ class HGRNBitAttention(nn.Module):
 
         # Update cache
         if past_key_values is not None and use_cache:
-            last_state = (recurrent_state,)
+            if self.use_short_conv:
+                if self.share_conv_kernel:
+                    last_state = (conv_state, recurrent_state)
+                else:
+                    last_state = (conv_state_i, conv_state_f, recurrent_state)
+            else:
+                last_state = (recurrent_state,)
             past_key_values.update(last_state, self.layer_idx, i.shape[2])
 
         # Apply gate normalization and output projection
@@ -176,14 +219,27 @@ class HGRNBitAttention(nn.Module):
         return o, None, past_key_values
 
     def init_state(self, batch_size: int) -> Tuple[torch.Tensor]:
-        """Initialize recurrent state for generation."""
+        """Initialize recurrent state (and optional conv state) for generation."""
         param = next(self.parameters())
-        state = (param.new_zeros(batch_size, self.num_heads, self.head_dim),)
+        state = tuple()
+        if self.use_short_conv:
+            if self.share_conv_kernel:
+                state += (param.new_zeros(batch_size, self.hidden_size, self.conv_size),)
+            else:
+                state += (param.new_zeros(batch_size, self.hidden_size, self.conv_size),
+                          param.new_zeros(batch_size, self.hidden_size, self.conv_size),
+                          param.new_zeros(batch_size, self.hidden_size, self.conv_size))
+        state += (param.new_zeros(batch_size, self.num_heads, self.head_dim),)
         return state
 
     def state_size(self, **kwargs) -> int:
-        """Return the size of the recurrent state."""
-        return self.hidden_size
+        """Return the size of the recurrent state (+ conv states if enabled)."""
+        state_size = self.hidden_size
+        if self.use_short_conv:
+            for module in self.children():
+                if ShortConvolution is not None and isinstance(module, ShortConvolution):
+                    state_size += module.state_size
+        return state_size
 
 
 class HGRNBitMLP(nn.Module):

@@ -2,21 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-Training entry point for SimplifiedSLM and HNetBit models.
+Training entry point for HNetBit models.
 
 Usage:
-    # Train flat model with defaults
-    python -m simplified_slm.train --output_dir runs/flat_test
+    # Train hierarchical model with defaults
+    python -m hnet_bit.train --output_dir runs/test
 
     # Train hierarchical model with config
-    python -m simplified_slm.train \
-        --model_type hierarchical \
+    python -m hnet_bit.train \
         --model_config configs/hnet_bit_1stage.json \
         --training_config configs/training_small.json
 
     # Resume from checkpoint
-    python -m simplified_slm.train \
-        --model_type hierarchical \
+    python -m hnet_bit.train \
         --resume_from runs/experiment/checkpoint_step_1000.pt
 """
 
@@ -28,42 +26,27 @@ import os
 
 import torch
 
-from simplified_slm.training.config import TrainingConfig
-from simplified_slm.training.data import ByteLevelDataset, TextFileDataset, create_synthetic_data
-from simplified_slm.training.dataset_loader import DatasetConfig, HuggingFaceDataset
-from simplified_slm.training.trainer import Trainer
-from simplified_slm.training.logger import TrainingLogger
+from hnet_bit.training.config import TrainingConfig
+from hnet_bit.training.data import ByteLevelDataset, TextFileDataset, create_synthetic_data
+from hnet_bit.training.dataset_loader import DatasetConfig, HuggingFaceDataset
+from hnet_bit.training.trainer import Trainer
+from hnet_bit.training.logger import TrainingLogger
 
 
-def build_model(model_type: str, model_config_path: str | None, device: torch.device):
-    """Build model from type and config."""
+def build_model(model_config_path: str | None, device: torch.device):
+    """Build HNetBit model from config."""
+    from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
-    if model_type == "hierarchical":
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
-
-        if model_config_path:
-            with open(model_config_path, 'r') as f:
-                cfg = json.load(f)
-            config = HNetBitConfig(**cfg)
-        else:
-            config = HNetBitConfig.small_1stage()
-        
-        model = HNetBitForCausalLM(config)
+    if model_config_path:
+        with open(model_config_path, 'r') as f:
+            cfg = json.load(f)
+        config = HNetBitConfig(**cfg)
     else:
-        from simplified_slm.models.config import SimplifiedSLMConfig
-        from simplified_slm.models.modeling import SimplifiedSLMForCausalLM
-
-        if model_config_path:
-            with open(model_config_path, 'r') as f:
-                cfg = json.load(f)
-            config = SimplifiedSLMConfig(**cfg)
-        else:
-            config = SimplifiedSLMConfig()
-        
-        model = SimplifiedSLMForCausalLM(config)
-
+        config = HNetBitConfig.small_1stage()
+    
+    model = HNetBitForCausalLM(config)
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"Model: {model_type}, Parameters: {n_params:,}")
+    print(f"Model: HNetBit, Parameters: {n_params:,}")
     return model.to(device)
 
 
@@ -100,7 +83,12 @@ def build_datasets(config: TrainingConfig, max_seq_length: int):
         train_ds = _make_ds(config.train_split)
 
         try:
+            # Use 10% of max_samples for validation (if limited)
+            saved_max = config.max_samples
+            if config.max_samples:
+                config.max_samples = max(1, config.max_samples // 10)
             val_ds = _make_ds(config.val_split)
+            config.max_samples = saved_max
         except Exception as exc:
             # Many datasets don't have a 'validation' split — fall back
             # to a random subset of the training data.
@@ -148,12 +136,9 @@ def build_datasets(config: TrainingConfig, max_seq_length: int):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train SimplifiedSLM / HNetBit models")
+    parser = argparse.ArgumentParser(description="Train HNetBit models")
     
     # Model
-    parser.add_argument("--model_type", type=str, default="flat",
-                        choices=["flat", "hierarchical"],
-                        help="Model architecture type")
     parser.add_argument("--model_config", type=str, default=None,
                         help="Path to model config JSON")
     
@@ -213,7 +198,7 @@ def main():
     
     # Defaults
     if config.output_dir == "./checkpoints":
-        config.output_dir = f"runs/{args.model_type}_experiment"
+        config.output_dir = f"runs/hnetbit_experiment"
     
     # Seed
     torch.manual_seed(config.seed)
@@ -227,10 +212,10 @@ def main():
         config.bf16 = False
     
     # Build model
-    model = build_model(args.model_type, args.model_config, device)
+    model = build_model(args.model_config, device)
     
-    # Apply per-stage learning rate multipliers for hierarchical models
-    if args.model_type == "hierarchical" and config.lr_multipliers is not None:
+    # Apply per-stage learning rate multipliers
+    if config.lr_multipliers is not None:
         print(f"Applying LR multipliers: {config.lr_multipliers}")
         model.backbone._apply_lr_multiplier(config.lr_multipliers)
     

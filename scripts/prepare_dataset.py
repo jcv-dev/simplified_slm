@@ -2,36 +2,36 @@
 # -*- coding: utf-8 -*-
 
 """
-Generic dataset preparation script for SimplifiedSLM.
+Generic dataset preparation script for HNetBit models.
 
 Downloads any HuggingFace text dataset, converts it to the byte-level
 format used by the training pipeline, and saves train/val/test splits.
 
 Examples:
     # TinyStories (text column auto-detected)
-    python -m simplified_slm.scripts.prepare_dataset \
+    python -m hnet_bit.scripts.prepare_dataset \
         --dataset roneneldan/TinyStories \
         --output_dir data/tinystories
 
     # WikiText-103
-    python -m simplified_slm.scripts.prepare_dataset \
+    python -m hnet_bit.scripts.prepare_dataset \
         --dataset wikitext --dataset_config wikitext-103-raw-v1 \
         --output_dir data/wikitext103
 
     # Alpaca (instruction + output columns)
-    python -m simplified_slm.scripts.prepare_dataset \
+    python -m hnet_bit.scripts.prepare_dataset \
         --dataset tatsu-lab/alpaca \
         --text_columns instruction output \
         --output_dir data/alpaca
 
     # Limit to 10k samples for quick testing
-    python -m simplified_slm.scripts.prepare_dataset \
+    python -m hnet_bit.scripts.prepare_dataset \
         --dataset roneneldan/TinyStories \
         --max_samples 10000 \
         --output_dir data/tinystories_small
 
     # Custom text column
-    python -m simplified_slm.scripts.prepare_dataset \
+    python -m hnet_bit.scripts.prepare_dataset \
         --dataset bookcorpus --text_column text \
         --output_dir data/bookcorpus
 """
@@ -48,7 +48,7 @@ import torch
 # Add parent to path so we can run as script or module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from simplified_slm.training.dataset_loader import (
+from hnet_bit.training.dataset_loader import (
     DatasetConfig,
     HuggingFaceDataset,
 )
@@ -127,7 +127,7 @@ def prepare(args: argparse.Namespace) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Prepare any HuggingFace dataset for SimplifiedSLM training",
+        description="Prepare any HuggingFace dataset for HNetBit training",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

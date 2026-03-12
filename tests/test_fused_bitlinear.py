@@ -43,8 +43,8 @@ class TestFusedBitLinearBasic:
 
     def test_is_bitlinear_subclass(self):
         """Test FusedBitLinear inherits from BitLinear."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
-        from simplified_slm.ops.bitnet import BitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.bitnet import BitLinear
 
         layer = FusedBitLinear(64, 32)
         assert isinstance(layer, BitLinear), \
@@ -54,7 +54,7 @@ class TestFusedBitLinearBasic:
 
     def test_forward_cpu_fallback(self):
         """Test that FusedBitLinear falls back to standard BitLinear on CPU."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
 
         layer = FusedBitLinear(128, 64, bias=False)
         x = torch.randn(2, 16, 128)
@@ -69,7 +69,7 @@ class TestFusedBitLinearBasic:
 
     def test_forward_shapes(self):
         """Test various input shapes."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
 
         layer = FusedBitLinear(256, 128)
 
@@ -83,7 +83,7 @@ class TestFusedBitLinearBasic:
 
     def test_backward_cpu(self):
         """Test gradient flow through FusedBitLinear on CPU."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
 
         layer = FusedBitLinear(64, 32, bias=False)
         x = torch.randn(2, 8, 64, requires_grad=True)
@@ -103,8 +103,8 @@ class TestFusedBitLinearBasic:
 
     def test_has_norm(self):
         """Test that FusedBitLinear has RMSNorm component."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
-        from simplified_slm.ops.bitnet import RMSNorm
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.bitnet import RMSNorm
 
         layer = FusedBitLinear(128, 64)
 
@@ -116,7 +116,7 @@ class TestFusedBitLinearBasic:
 
     def test_triton_availability_flag(self):
         """Test Triton availability is correctly detected."""
-        from simplified_slm.ops.fusedbitnet import _TRITON_AVAILABLE
+        from hnet_bit.ops.fusedbitnet import _TRITON_AVAILABLE
 
         # Just report the flag — it's machine-dependent
         print(f"✓ Triton available: {_TRITON_AVAILABLE}")
@@ -127,8 +127,8 @@ class TestFusedBitLinearCPUEquivalence:
 
     def test_same_weights(self):
         """Test that FusedBitLinear and BitLinear have same weights."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
-        from simplified_slm.ops.bitnet import BitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.bitnet import BitLinear
 
         fused = FusedBitLinear(128, 64, bias=False)
         standard = BitLinear(128, 64, bias=False)
@@ -151,8 +151,8 @@ class TestFusedBitLinearCPUEquivalence:
 
     def test_backward_equivalence(self):
         """Test gradient equivalence between Fused and standard on CPU."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
-        from simplified_slm.ops.bitnet import BitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.bitnet import BitLinear
 
         torch.manual_seed(42)
         fused = FusedBitLinear(64, 32, bias=False)
@@ -187,7 +187,7 @@ class TestFusedBitLinearCUDA:
     @_skip_if_no_cuda
     def test_forward_cuda(self):
         """Test FusedBitLinear forward on CUDA."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear, _TRITON_AVAILABLE
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear, _TRITON_AVAILABLE
 
         layer = FusedBitLinear(256, 128).cuda()
         x = torch.randn(4, 32, 256, device='cuda')
@@ -203,7 +203,7 @@ class TestFusedBitLinearCUDA:
     @_skip_if_no_cuda
     def test_backward_cuda(self):
         """Test FusedBitLinear backward on CUDA."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear
 
         layer = FusedBitLinear(128, 64).cuda()
         x = torch.randn(2, 16, 128, device='cuda', requires_grad=True)
@@ -221,8 +221,8 @@ class TestFusedBitLinearCUDA:
     @_skip_if_no_cuda
     def test_numerical_equivalence_cuda(self):
         """Test that fused and standard BitLinear produce similar results on CUDA."""
-        from simplified_slm.ops.fusedbitnet import FusedBitLinear, _TRITON_AVAILABLE
-        from simplified_slm.ops.bitnet import BitLinear
+        from hnet_bit.ops.fusedbitnet import FusedBitLinear, _TRITON_AVAILABLE
+        from hnet_bit.ops.bitnet import BitLinear
 
         if not _TRITON_AVAILABLE:
             print(f"⚠ Triton not available — Fused will use same codepath as standard")
@@ -255,7 +255,7 @@ class TestFusedBitLinearIntegration:
 
     def test_model_uses_fused(self):
         """Test that HNetBit can be configured to use FusedBitLinear."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
 
         config = HNetBitConfig(
             d_model=[64, 96],
@@ -268,7 +268,7 @@ class TestFusedBitLinearIntegration:
 
     def test_bitlinear_in_model(self):
         """Test that model BitLinear layers work (FusedBitLinear is optional)."""
-        from simplified_slm.ops.bitnet import BitLinear
+        from hnet_bit.ops.bitnet import BitLinear
 
         layer = BitLinear(64, 32)
         x = torch.randn(1, 8, 64)

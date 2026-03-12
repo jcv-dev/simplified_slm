@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
-from simplified_slm.ops.bitnet import BitLinear, activation_quant, weight_quant
-from simplified_slm.ops.fusedbitnet import FusedBitLinear
-from simplified_slm.ops.dynamic_chunking import RoutingModuleBit, ChunkLayer, DeChunkLayer
+from hnet_bit.ops.bitnet import BitLinear, activation_quant, weight_quant
+from hnet_bit.ops.fusedbitnet import FusedBitLinear
+from hnet_bit.ops.dynamic_chunking import RoutingModuleBit, ChunkLayer, DeChunkLayer
 
 __all__ = [
     "BitLinear",

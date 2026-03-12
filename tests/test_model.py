@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Unit tests for Simplified SLM with ternary weights.
+Unit tests for HNet-Bit with ternary weights.
 
 Tests:
 1. BitLinear ternary weight quantization
@@ -14,7 +14,7 @@ Tests:
 import sys
 import os
 
-# Add project root to path (parent of simplified_slm package)
+# Add project root to path (parent of hnet_bit package)
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -34,7 +34,7 @@ class TestBitLinear:
     
     def test_weight_quant_ternary(self):
         """Test that weight_quant produces ternary values."""
-        from simplified_slm.ops.bitnet import weight_quant
+        from hnet_bit.ops.bitnet import weight_quant
         
         # Random weights
         w = torch.randn(256, 512)
@@ -62,7 +62,7 @@ class TestBitLinear:
         
     def test_activation_quant_range(self):
         """Test that activation_quant produces values in expected range."""
-        from simplified_slm.ops.bitnet import activation_quant
+        from hnet_bit.ops.bitnet import activation_quant
         
         x = torch.randn(32, 512)
         x_quant = activation_quant(x)
@@ -80,7 +80,7 @@ class TestBitLinear:
         
     def test_bitlinear_forward(self):
         """Test BitLinear forward pass."""
-        from simplified_slm.ops.bitnet import BitLinear
+        from hnet_bit.ops.bitnet import BitLinear
         
         layer = BitLinear(512, 256, bias=False)
         x = torch.randn(2, 128, 512)
@@ -94,7 +94,7 @@ class TestBitLinear:
         
     def test_bitlinear_gradient_flow(self):
         """Test that gradients flow through BitLinear with STE."""
-        from simplified_slm.ops.bitnet import BitLinear
+        from hnet_bit.ops.bitnet import BitLinear
         
         layer = BitLinear(512, 256, bias=False)
         x = torch.randn(2, 128, 512, requires_grad=True)
@@ -131,7 +131,7 @@ class TestHGRN:
     @_skip_if_no_cuda
     def test_fused_recurrent_forward(self):
         """Test fused recurrent HGRN forward pass."""
-        from simplified_slm.ops.hgrn import fused_recurrent_hgrn
+        from hnet_bit.ops.hgrn import fused_recurrent_hgrn
         
         B, H, T, D = 2, 1, 128, 512
         x = torch.randn(B, H, T, D, device='cuda')
@@ -148,7 +148,7 @@ class TestHGRN:
     @_skip_if_no_cuda
     def test_fused_recurrent_backward(self):
         """Test fused recurrent HGRN backward pass."""
-        from simplified_slm.ops.hgrn import fused_recurrent_hgrn
+        from hnet_bit.ops.hgrn import fused_recurrent_hgrn
         
         B, H, T, D = 2, 1, 128, 512
         x = torch.randn(B, H, T, D, device='cuda', requires_grad=True)
@@ -166,7 +166,7 @@ class TestHGRN:
     @_skip_if_no_cuda
     def test_chunk_hgrn_forward(self):
         """Test chunk-parallel HGRN forward pass."""
-        from simplified_slm.ops.hgrn import chunk_hgrn
+        from hnet_bit.ops.hgrn import chunk_hgrn
         import torch.nn.functional as F
         
         B, H, T, D = 2, 1, 128, 512
@@ -186,126 +186,12 @@ class TestHGRN:
         print(f"✓ Chunk HGRN forward: {x.shape} -> {o.shape}")
 
 
-class TestFullModel:
-    """Tests for full SimplifiedSLM model."""
-    
-    @_skip_if_no_cuda
-    def test_model_forward(self):
-        """Test full model forward pass."""
-        from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
-        
-        config = SimplifiedSLMConfig(
-            vocab_size=256,
-            hidden_size=256,
-            num_hidden_layers=2,
-            num_heads=1,
-        )
-        model = SimplifiedSLMForCausalLM(config).cuda()
-        
-        batch_size, seq_len = 2, 128
-        input_ids = torch.randint(0, 256, (batch_size, seq_len), device='cuda')
-        
-        outputs = model(input_ids)
-        logits = outputs.logits
-        
-        expected_shape = (batch_size, seq_len, config.vocab_size)
-        assert logits.shape == expected_shape, f"Expected {expected_shape}, got {logits.shape}"
-        assert not torch.isnan(logits).any(), "Logits contain NaN"
-        
-        print(f"✓ Model forward pass: input_ids {input_ids.shape} -> logits {logits.shape}")
-        print(f"  Parameters: {model.count_parameters():,}")
-        
-    @_skip_if_no_cuda
-    def test_model_backward(self):
-        """Test model backward pass with loss."""
-        from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
-        
-        config = SimplifiedSLMConfig(
-            vocab_size=256,
-            hidden_size=256,
-            num_hidden_layers=2,
-            num_heads=1,
-        )
-        model = SimplifiedSLMForCausalLM(config).cuda()
-        
-        batch_size, seq_len = 2, 128
-        input_ids = torch.randint(0, 256, (batch_size, seq_len), device='cuda')
-        labels = input_ids.clone()
-        
-        outputs = model(input_ids, labels=labels)
-        loss = outputs.loss
-        
-        assert loss is not None, "Loss should not be None when labels provided"
-        assert not torch.isnan(loss), "Loss is NaN"
-        
-        loss.backward()
-        
-        # Check some gradients
-        has_grads = sum(1 for p in model.parameters() if p.grad is not None)
-        print(f"✓ Model backward pass: loss = {loss.item():.4f}")
-        print(f"  Parameters with gradients: {has_grads}/{len(list(model.parameters()))}")
-        
-    @_skip_if_no_cuda
-    def test_ternary_weight_stats(self):
-        """Test ternary weight statistics."""
-        from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
-        
-        config = SimplifiedSLMConfig(
-            vocab_size=256,
-            hidden_size=256,
-            num_hidden_layers=2,
-            num_heads=1,
-        )
-        model = SimplifiedSLMForCausalLM(config).cuda()
-        
-        stats = model.get_ternary_weight_stats()
-        
-        print(f"✓ Ternary weight statistics:")
-        print(f"  Total parameters: {stats['total_params']:,}")
-        print(f"  Ternary parameters: {stats['ternary_params']:,}")
-        if 'distribution_pct' in stats:
-            print(f"  Distribution: -1: {stats['distribution_pct'][-1]:.1f}%, "
-                  f"0: {stats['distribution_pct'][0]:.1f}%, "
-                  f"1: {stats['distribution_pct'][1]:.1f}%")
-                  
-    @_skip_if_no_cuda
-    def test_generation(self):
-        """Test text generation."""
-        from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
-        
-        config = SimplifiedSLMConfig(
-            vocab_size=256,
-            hidden_size=256,
-            num_hidden_layers=2,
-            num_heads=1,
-        )
-        model = SimplifiedSLMForCausalLM(config).cuda()
-        model.eval()
-        
-        # Simple prompt
-        prompt = torch.tensor([[72, 101, 108, 108, 111]], device='cuda')  # "Hello"
-        
-        with torch.no_grad():
-            generated = model.generate(
-                prompt,
-                max_new_tokens=10,
-                do_sample=False,
-                pad_token_id=config.pad_token_id or 0,
-            )
-        
-        assert generated.shape[0] == 1, "Batch size should be 1"
-        assert generated.shape[1] >= prompt.shape[1], "Generated should be at least as long as prompt"
-        
-        print(f"✓ Generation: {prompt.shape} -> {generated.shape}")
-        print(f"  Generated tokens: {generated[0].tolist()}")
-
-
 class TestMemory:
     """Memory footprint tests."""
     
     def test_memory_comparison(self):
         """Compare memory of ternary vs FP16 weights."""
-        from simplified_slm.ops.bitnet import weight_quant
+        from hnet_bit.ops.bitnet import weight_quant
         
         # Simulate a weight matrix
         hidden_size = 2048
@@ -330,7 +216,7 @@ class TestMemory:
 def run_all_tests():
     """Run all tests."""
     print("=" * 60)
-    print("Running Simplified SLM Unit Tests")
+    print("Running HNetBit Component Unit Tests")
     print("=" * 60)
     
     # BitLinear tests
@@ -354,12 +240,8 @@ def run_all_tests():
         test_hgrn.test_fused_recurrent_backward()
         test_hgrn.test_chunk_hgrn_forward()
         
-        print("\n--- Full Model Tests (CUDA) ---")
-        test_model = TestFullModel()
-        test_model.test_model_forward()
-        test_model.test_model_backward()
-        test_model.test_ternary_weight_stats()
-        test_model.test_generation()
+        print("\n--- Full HNetBit model tests ---")
+        print("  See test_hnet_bit.py for hierarchical model tests")
     else:
         print("\n⚠ CUDA not available, skipping GPU tests")
     

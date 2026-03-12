@@ -13,7 +13,7 @@ import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from simplified_slm.training.metrics import (
+from hnet_bit.training.metrics import (
     EvaluationMetrics,
     compute_bpb,
     compute_perplexity,

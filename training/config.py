@@ -89,6 +89,9 @@ class TrainingConfig:
     fp16: bool = False
     bf16: bool = False
     
+    # Packed sequences
+    use_packed_sequences: bool = False  # Pack variable-length sequences for faster training
+    
     # Resume
     resume_from: Optional[str] = None
     

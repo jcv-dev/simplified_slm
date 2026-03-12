@@ -2,12 +2,12 @@
 
 """Training infrastructure for simplified_slm."""
 
-from simplified_slm.training.config import TrainingConfig
-from simplified_slm.training.trainer import Trainer
-from simplified_slm.training.data import ByteLevelDataset, TextFileDataset, collate_fn
-from simplified_slm.training.optimizer import build_optimizer, build_scheduler
-from simplified_slm.training.logger import TrainingLogger
-from simplified_slm.training.dataset_loader import (
+from hnet_bit.training.config import TrainingConfig
+from hnet_bit.training.trainer import Trainer
+from hnet_bit.training.data import ByteLevelDataset, TextFileDataset, collate_fn
+from hnet_bit.training.optimizer import build_optimizer, build_scheduler
+from hnet_bit.training.logger import TrainingLogger
+from hnet_bit.training.dataset_loader import (
     DatasetConfig,
     DatasetStatistics,
     HuggingFaceDataset,
@@ -18,7 +18,7 @@ from simplified_slm.training.dataset_loader import (
     prepare_datasets,
     print_dataset_stats,
 )
-from simplified_slm.training.metrics import (
+from hnet_bit.training.metrics import (
     EvaluationMetrics,
     compute_bpb,
     compute_perplexity,

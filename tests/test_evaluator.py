@@ -15,9 +15,9 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from simplified_slm.training.evaluator import Evaluator, EvaluatorConfig, create_evaluator
-from simplified_slm.training.data import ByteLevelDataset, collate_fn
-from simplified_slm.utils import ByteTokenizer
+from hnet_bit.training.evaluator import Evaluator, EvaluatorConfig, create_evaluator
+from hnet_bit.training.data import ByteLevelDataset, collate_fn
+from hnet_bit.utils import ByteTokenizer
 
 
 class MockModel(nn.Module):

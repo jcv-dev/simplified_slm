@@ -41,7 +41,7 @@ def _skip_if_no_cuda(func):
 
 def _make_small_config():
     """Create a minimal config for fast testing."""
-    from simplified_slm.models.hnet_bit import HNetBitConfig
+    from hnet_bit.models.hnet_bit import HNetBitConfig
     return HNetBitConfig(
         vocab_size=256,
         d_model=[64, 96],
@@ -56,7 +56,7 @@ def _make_small_config():
 
 def _make_2stage_config():
     """Create a minimal 2-stage config for testing."""
-    from simplified_slm.models.hnet_bit import HNetBitConfig
+    from hnet_bit.models.hnet_bit import HNetBitConfig
     return HNetBitConfig(
         vocab_size=256,
         d_model=[32, 48, 64],
@@ -74,7 +74,7 @@ class TestHNetBitConfig:
 
     def test_default_config(self):
         """Test default config values."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
 
         config = HNetBitConfig()
         assert config.vocab_size == 256
@@ -87,7 +87,7 @@ class TestHNetBitConfig:
 
     def test_small_1stage_preset(self):
         """Test small_1stage preset constructor."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
 
         config = HNetBitConfig.small_1stage()
         assert config.d_model == [256, 384]
@@ -98,7 +98,7 @@ class TestHNetBitConfig:
 
     def test_base_2stage_preset(self):
         """Test base_2stage preset constructor."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
 
         config = HNetBitConfig.base_2stage()
         assert config.d_model == [512, 768, 1024]
@@ -109,7 +109,7 @@ class TestHNetBitConfig:
 
     def test_large_2stage_preset(self):
         """Test large_2stage preset constructor."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
 
         config = HNetBitConfig.large_2stage()
         assert config.d_model == [768, 1024, 1536]
@@ -119,7 +119,7 @@ class TestHNetBitConfig:
 
     def test_make_stage_config(self):
         """Test _make_stage_config creates proper per-stage config."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
 
         config = HNetBitConfig(d_model=[128, 256])
         cfg0 = config._make_stage_config(0)
@@ -134,7 +134,7 @@ class TestHNetBitConfig:
 
     def test_config_serialization(self):
         """Test config can be serialized and deserialized."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig
+        from hnet_bit.models.hnet_bit import HNetBitConfig
 
         config = HNetBitConfig(d_model=[128, 256, 512], num_blocks=[[2, 0, 2], [2, 0, 2], [4]])
         d = config.to_dict()
@@ -152,7 +152,7 @@ class TestHNetBitBackbone:
 
     def test_1stage_forward_cpu(self):
         """Test 1-stage backbone forward pass on CPU."""
-        from simplified_slm.models.hnet_bit import HNetBit
+        from hnet_bit.models.hnet_bit import HNetBit
 
         config = _make_small_config()
         backbone = HNetBit(config, stage_idx=0)
@@ -172,7 +172,7 @@ class TestHNetBitBackbone:
 
     def test_2stage_forward_cpu(self):
         """Test 2-stage backbone forward pass on CPU."""
-        from simplified_slm.models.hnet_bit import HNetBit
+        from hnet_bit.models.hnet_bit import HNetBit
 
         config = _make_2stage_config()
         backbone = HNetBit(config, stage_idx=0)
@@ -194,7 +194,7 @@ class TestHNetBitBackbone:
 
     def test_dimension_padding(self):
         """Test dimension padding between stages."""
-        from simplified_slm.models.hnet_bit import HNetBit
+        from hnet_bit.models.hnet_bit import HNetBit
 
         config = _make_small_config()  # d_model=[64, 96]
         backbone = HNetBit(config, stage_idx=0)
@@ -211,7 +211,7 @@ class TestHNetBitBackbone:
 
     def test_residual_count(self):
         """Test _count_residuals reports correct number of residual additions."""
-        from simplified_slm.models.hnet_bit import HNetBit
+        from hnet_bit.models.hnet_bit import HNetBit
 
         config = _make_small_config()  # 2 enc + 4 inner + 2 dec
         backbone = HNetBit(config, stage_idx=0)
@@ -231,7 +231,7 @@ class TestHNetBitForCausalLM:
 
     def test_model_forward_cpu(self):
         """Test full model forward pass on CPU."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config)
@@ -250,7 +250,7 @@ class TestHNetBitForCausalLM:
 
     def test_model_with_labels_cpu(self):
         """Test model forward with loss computation on CPU."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config)
@@ -269,7 +269,7 @@ class TestHNetBitForCausalLM:
 
     def test_model_backward_cpu(self):
         """Test gradient flow through full model on CPU."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config)
@@ -294,7 +294,7 @@ class TestHNetBitForCausalLM:
 
     def test_2stage_forward_cpu(self):
         """Test 2-stage model forward pass."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_2stage_config()
         model = HNetBitForCausalLM(config)
@@ -312,7 +312,7 @@ class TestHNetBitForCausalLM:
 
     def test_parameter_count(self):
         """Test parameter counting method."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config)
@@ -327,7 +327,7 @@ class TestHNetBitForCausalLM:
 
     def test_ternary_weight_stats(self):
         """Test ternary weight statistics."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config)
@@ -356,7 +356,7 @@ class TestHNetBitForCausalLM:
 
     def test_attention_mask(self):
         """Test model with attention mask (padded batch)."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config)
@@ -380,8 +380,8 @@ class TestHierarchicalCache:
 
     def test_cache_allocation_1stage(self):
         """Test cache allocation for 1-stage model."""
-        from simplified_slm.models.hnet_bit import HNetBit, HNetBitConfig
-        from simplified_slm.utils.hnet_cache import HNetBitCache
+        from hnet_bit.models.hnet_bit import HNetBit, HNetBitConfig
+        from hnet_bit.utils.hnet_cache import HNetBitCache
 
         config = _make_small_config()
         backbone = HNetBit(config, stage_idx=0)
@@ -404,8 +404,8 @@ class TestHierarchicalCache:
 
     def test_cache_allocation_2stage(self):
         """Test cache allocation for 2-stage model."""
-        from simplified_slm.models.hnet_bit import HNetBit
-        from simplified_slm.utils.hnet_cache import HNetBitCache
+        from hnet_bit.models.hnet_bit import HNetBit
+        from hnet_bit.utils.hnet_cache import HNetBitCache
 
         config = _make_2stage_config()
         backbone = HNetBit(config, stage_idx=0)
@@ -425,8 +425,8 @@ class TestHierarchicalCache:
 
     def test_cache_seq_length(self):
         """Test cache sequence length tracking."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
-        from simplified_slm.utils.hnet_cache import HNetBitCache
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.utils.hnet_cache import HNetBitCache
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config)
@@ -452,7 +452,7 @@ class TestModelCUDA:
     @_skip_if_no_cuda
     def test_forward_cuda(self):
         """Test full model forward on CUDA."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config).cuda()
@@ -470,7 +470,7 @@ class TestModelCUDA:
     @_skip_if_no_cuda
     def test_backward_cuda(self):
         """Test backward on CUDA."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config).cuda()
@@ -489,7 +489,7 @@ class TestModelCUDA:
     @_skip_if_no_cuda
     def test_generation_cuda(self):
         """Test generation on CUDA."""
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config = _make_small_config()
         model = HNetBitForCausalLM(config).cuda()
@@ -518,7 +518,7 @@ class TestModelFromConfig:
     def test_load_1stage_config(self):
         """Test creating model from 1-stage JSON config."""
         import json
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -538,7 +538,7 @@ class TestModelFromConfig:
     def test_load_2stage_config(self):
         """Test creating model from 2-stage JSON config."""
         import json
-        from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+        from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
 
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

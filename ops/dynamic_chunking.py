@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from simplified_slm.ops.hgrn import fused_recurrent_hgrn
+from hnet_bit.ops.hgrn import fused_recurrent_hgrn
 
 
 @dataclass
@@ -109,24 +109,33 @@ class RoutingModuleBit(nn.Module):
         self,
         hidden_states: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        cu_seqlens: Optional[torch.Tensor] = None,
         inference_params: Optional[RoutingModuleState] = None,
     ) -> RoutingModuleOutput:
         """
         Compute chunk boundaries for a sequence.
         
         Args:
-            hidden_states: Input tensor (B, L, D)
+            hidden_states: Input tensor (B, L, D) or packed (T, D) if cu_seqlens given
             mask: Valid token mask (B, L), True for valid positions
+            cu_seqlens: Cumulative sequence lengths for packed mode (N+1,)
             inference_params: Optional state for prefill phase
             
         Returns:
             RoutingModuleOutput with boundary predictions
         """
-        assert mask is not None, "Mask must be provided"
+        assert (mask is not None) or (cu_seqlens is not None), \
+            "Either mask or cu_seqlens must be provided"
 
         if inference_params is not None:
+            assert mask is not None, "Mask must be provided if inference_params is provided"
             assert (~inference_params.has_seen_tokens).all(), \
                 "Cannot have seen tokens when running forward (use step for incremental)"
+
+        packed_mode = cu_seqlens is not None
+        if packed_mode:
+            # Packed mode: hidden_states is (T, D), make it (1, T, D)
+            hidden_states = hidden_states.unsqueeze(0)
 
         # Cosine similarity between consecutive tokens (computed in FP32 for stability)
         q = F.normalize(self.q_proj_layer(hidden_states[:, :-1]).float(), dim=-1)
@@ -139,6 +148,11 @@ class RoutingModuleBit(nn.Module):
         # Force first token to always be a boundary
         PAD_PROB = 1.0
         boundary_prob = F.pad(boundary_prob, (1, 0), "constant", PAD_PROB)
+
+        if packed_mode:
+            # Force boundary at start of each packed sequence
+            boundary_prob = boundary_prob.squeeze(0)  # (T,)
+            boundary_prob[cu_seqlens[:-1]] = PAD_PROB
 
         # Stack as [prob_no_boundary, prob_boundary]
         boundary_prob = torch.stack(((1 - boundary_prob), boundary_prob), dim=-1)
@@ -237,23 +251,35 @@ class ChunkLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         boundary_mask: torch.Tensor,
+        cu_seqlens: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
     ):
         """
         Select boundary tokens to form chunks.
         
         Args:
-            hidden_states: Input tensor (B, L, D)
-            boundary_mask: Boolean boundary mask (B, L)
+            hidden_states: Input tensor (B, L, D) or packed (T, D)
+            boundary_mask: Boolean boundary mask (B, L) or (T,)
+            cu_seqlens: Cumulative sequence lengths for packed mode (N+1,)
             mask: Valid token mask (B, L)
             
         Returns:
-            Tuple of (next_hidden_states, next_mask):
-                next_hidden_states: Chunked tokens (B, M, D) where M = max chunks
-                next_mask: Valid chunk mask (B, M)
+            Tuple of (next_hidden_states, next_cu_seqlens, next_mask):
+                In packed mode: next_hidden_states (M, D), next_cu_seqlens (N+1,), next_mask=None
+                In padded mode: next_hidden_states (B, M, D), next_cu_seqlens=None, next_mask (B, M)
         """
-        assert mask is not None, "Mask must be provided"
+        assert (mask is not None) or (cu_seqlens is not None), \
+            "Either mask or cu_seqlens must be provided"
+
+        if cu_seqlens is not None:
+            # Packed mode: hidden_states is (T, D), boundary_mask is (T,)
+            next_hidden_states = hidden_states[boundary_mask]
+            next_cu_seqlens = F.pad(
+                boundary_mask.cumsum(dim=0)[cu_seqlens[1:] - 1], (1, 0)
+            )
+            return next_hidden_states, next_cu_seqlens, None
         
+        # Padded mode: hidden_states is (B, L, D)
         num_tokens = boundary_mask.sum(dim=-1)  # (B,)
         next_max_seqlen = int(num_tokens.max())
 
@@ -280,7 +306,7 @@ class ChunkLayer(nn.Module):
             < num_tokens[:, None]
         )
 
-        return next_hidden_states, next_mask
+        return next_hidden_states, None, next_mask
 
     def step(
         self,
@@ -332,6 +358,7 @@ class DeChunkLayer(nn.Module):
         hidden_states: torch.Tensor,
         boundary_mask: torch.Tensor,
         boundary_prob: torch.Tensor,
+        cu_seqlens: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
         inference_params: Optional[DeChunkState] = None,
     ) -> torch.Tensor:
@@ -339,26 +366,77 @@ class DeChunkLayer(nn.Module):
         Reconstruct full sequence from chunked representations.
         
         Runs EMA on the M boundary tokens only, then broadcasts back to all
-        L positions via plug_back_idx (matching H-Net dc.py semantics).
+        positions via plug_back_idx (matching H-Net dc.py semantics).
         
         EMA: out_t = p_t * chunk_t + (1 - p_t) * out_{t-1}
         where p_t is the boundary probability at each chunk position.
         
         Args:
-            hidden_states: Chunked representations (B, M, D)
-            boundary_mask: Original boundary mask (B, L)
-            boundary_prob: Boundary probabilities (B, L, 2)
+            hidden_states: Chunked representations (B, M, D) or packed (M, D)
+            boundary_mask: Original boundary mask (B, L) or (T,)
+            boundary_prob: Boundary probabilities (B, L, 2) or (T, 2)
+            cu_seqlens: Cumulative sequence lengths for packed mode (N+1,)
             mask: Valid token mask (B, L)
             inference_params: Optional state for prefill
             
         Returns:
-            Reconstructed sequence (B, L, D)
+            Reconstructed sequence (B, L, D) or packed (T, D)
         """
+        original_dtype = hidden_states.dtype
+        packed_mode = cu_seqlens is not None
+
+        if packed_mode:
+            # Packed mode: hidden_states is (M, D), boundary_mask is (T,)
+            T = boundary_mask.shape[0]
+            M = hidden_states.shape[0]
+            D = hidden_states.shape[-1]
+            device = hidden_states.device
+
+            p_all = torch.clamp(boundary_prob[..., -1].float(), min=1e-4, max=1 - 1e-4)  # (T,)
+            p = p_all[boundary_mask]  # (M,)
+
+            # Build seq_idx for packed sequences so EMA resets at sequence boundaries
+            seq_idx = torch.zeros(M, dtype=torch.long, device=device)
+            next_cu = F.pad(boundary_mask.cumsum(dim=0)[cu_seqlens[1:] - 1], (1, 0))
+            for i in range(len(next_cu) - 1):
+                seq_idx[next_cu[i]:next_cu[i+1]] = i
+
+            if M > 0:
+                p_expanded = p.unsqueeze(-1)  # (M, 1)
+                x_hgrn = (p_expanded * hidden_states.float()).unsqueeze(0).unsqueeze(0)  # (1, 1, M, D)
+                g_hgrn = (1 - p_expanded).expand(-1, D).unsqueeze(0).unsqueeze(0)  # (1, 1, M, D)
+
+                # Process each sequence segment separately via seq_idx
+                # Group by sequence and run EMA per sequence
+                ema_parts = []
+                for i in range(len(next_cu) - 1):
+                    start, end = int(next_cu[i]), int(next_cu[i+1])
+                    if end > start:
+                        seg_x = x_hgrn[:, :, start:end, :]
+                        seg_g = g_hgrn[:, :, start:end, :]
+                        seg_out, _ = fused_recurrent_hgrn(seg_x, seg_g)
+                        ema_parts.append(seg_out.squeeze(0).squeeze(0))
+                if ema_parts:
+                    ema_out = torch.cat(ema_parts, dim=0)  # (M, D)
+                else:
+                    ema_out = hidden_states.float()
+            else:
+                ema_out = hidden_states.float()
+
+            # Broadcast back to all T positions
+            plug_back_idx = boundary_mask.cumsum(dim=0) - 1  # (T,)
+            out = torch.gather(
+                ema_out, dim=0,
+                index=plug_back_idx.unsqueeze(-1).expand(-1, D),
+            )  # (T, D)
+
+            return out.to(original_dtype)
+
+        # Padded mode: original implementation
         B, L = boundary_mask.shape
         M = hidden_states.shape[1]
         D = hidden_states.shape[-1]
         device = hidden_states.device
-        original_dtype = hidden_states.dtype
 
         # Extract boundary probabilities for the M boundary tokens only.
         # Use the same argsort trick as ChunkLayer to select boundary probs.

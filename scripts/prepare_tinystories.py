@@ -22,12 +22,12 @@ import torch
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from simplified_slm.training import (
+from hnet_bit.training import (
     DatasetConfig,
     TinyStoriesDataset,
     print_dataset_stats,
 )
-from simplified_slm.training.data import ByteLevelDataset
+from hnet_bit.training.data import ByteLevelDataset
 
 
 def prepare_tinystories(

@@ -6,12 +6,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from simplified_slm.models.hnet_bit import HNetBit, HNetBitConfig
-from simplified_slm.training.config import TrainingConfig
-from simplified_slm.training.optimizer import build_optimizer_hierarchical
-from simplified_slm.training.trainer import Trainer
-from simplified_slm.ops.dynamic_chunking import RoutingModuleOutput
-from simplified_slm.utils.helpers import apply_optimization_params
+from hnet_bit.models.hnet_bit import HNetBit, HNetBitConfig
+from hnet_bit.training.config import TrainingConfig
+from hnet_bit.training.optimizer import build_optimizer_hierarchical
+from hnet_bit.training.trainer import Trainer
+from hnet_bit.ops.dynamic_chunking import RoutingModuleOutput
+from hnet_bit.utils.helpers import apply_optimization_params
 
 
 class TestApplyOptimizationParams:
@@ -150,8 +150,8 @@ class TestLoadBalancingLoss:
     
     def test_compute_lb_loss_single_stage(self):
         """Test load balancing loss for single routing output."""
-        from simplified_slm.training.trainer import Trainer
-        from simplified_slm.training.data import ByteLevelDataset
+        from hnet_bit.training.trainer import Trainer
+        from hnet_bit.training.data import ByteLevelDataset
         
         # Create minimal trainer with proper dataset
         config = HNetBitConfig(vocab_size=256, d_model=[128], num_blocks=[[4]])
@@ -187,8 +187,8 @@ class TestLoadBalancingLoss:
     
     def test_compute_lb_loss_empty_outputs(self):
         """Test load balancing loss with empty router outputs."""
-        from simplified_slm.training.trainer import Trainer
-        from simplified_slm.training.data import ByteLevelDataset
+        from hnet_bit.training.trainer import Trainer
+        from hnet_bit.training.data import ByteLevelDataset
         
         config = HNetBitConfig(vocab_size=256, d_model=[128], num_blocks=[[4]])
         model = HNetBit(config, stage_idx=0)
@@ -210,8 +210,8 @@ class TestLoadBalancingLoss:
     
     def test_compute_lb_loss_multiple_stages(self):
         """Test load balancing loss for multiple routing outputs."""
-        from simplified_slm.training.trainer import Trainer
-        from simplified_slm.training.data import ByteLevelDataset
+        from hnet_bit.training.trainer import Trainer
+        from hnet_bit.training.data import ByteLevelDataset
         
         config = HNetBitConfig(vocab_size=256, d_model=[128], num_blocks=[[4]])
         model = HNetBit(config, stage_idx=0)

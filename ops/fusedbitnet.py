@@ -17,8 +17,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from simplified_slm.ops.bitnet import RMSNorm, BitLinear, activation_quant, weight_quant
-from simplified_slm.utils.helpers import contiguous
+from hnet_bit.ops.bitnet import RMSNorm, BitLinear, activation_quant, weight_quant
+from hnet_bit.utils.helpers import contiguous
 
 # Try to import Triton; if unavailable, FusedBitLinear falls back to BitLinear
 _TRITON_AVAILABLE = False

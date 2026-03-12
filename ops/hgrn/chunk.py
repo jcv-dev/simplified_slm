@@ -19,7 +19,7 @@ import torch
 import triton
 import triton.language as tl
 
-from simplified_slm.utils.helpers import contiguous
+from hnet_bit.utils.helpers import contiguous
 
 
 @triton.autotune(

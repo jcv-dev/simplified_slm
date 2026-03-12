@@ -22,12 +22,11 @@ from torch.utils.data import DataLoader
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from simplified_slm.models import SimplifiedSLMConfig, SimplifiedSLMForCausalLM
-from simplified_slm.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
-from simplified_slm.utils import ByteTokenizer
-from simplified_slm.training import collate_fn
-from simplified_slm.training.evaluator import Evaluator, EvaluatorConfig
-from simplified_slm.scripts.prepare_tinystories import load_prepared_dataset
+from hnet_bit.models.hnet_bit import HNetBitConfig, HNetBitForCausalLM
+from hnet_bit.utils import ByteTokenizer
+from hnet_bit.training import collate_fn
+from hnet_bit.training.evaluator import Evaluator, EvaluatorConfig
+from hnet_bit.scripts.prepare_tinystories import load_prepared_dataset
 
 
 def load_model(model_path: str, config_path: str = None, device: str = 'cuda'):
@@ -43,14 +42,10 @@ def load_model(model_path: str, config_path: str = None, device: str = 'cuda'):
     else:
         raise ValueError("No config in checkpoint and no config_path provided")
     
-    # Create model
-    model_type = cfg_dict.get('model_type', 'simplified_slm')
-    if model_type == 'hnet_bit':
-        config = HNetBitConfig(**cfg_dict)
-        model = HNetBitForCausalLM(config)
-    else:
-        config = SimplifiedSLMConfig(**cfg_dict)
-        model = SimplifiedSLMForCausalLM(config)
+    # Create model - always use HNetBit
+    model_type = cfg_dict.get('model_type', 'hnet_bit')
+    config = HNetBitConfig(**cfg_dict)
+    model = HNetBitForCausalLM(config)
     
     # Load weights
     if 'model_state_dict' in checkpoint:
