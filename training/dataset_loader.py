@@ -211,8 +211,12 @@ class HuggingFaceDataset(Dataset):
         print(f"Using text column(s): {text_columns}")
         
         # Convert to bytes
-        all_bytes = []
-        sample_lengths = []
+        # bytearray uses 1 byte/element vs ~28 bytes for a Python list of ints
+        all_bytes = bytearray()
+        num_samples = 0
+        total_len = 0
+        min_len = 0
+        max_len = 0
         
         print("Converting to byte sequences...")
         for i, example in enumerate(dataset):
@@ -223,30 +227,41 @@ class HuggingFaceDataset(Dataset):
             if text is None:
                 continue
                 
-            byte_seq = list(text.encode('utf-8'))
+            byte_seq = text.encode('utf-8')
             
             # Apply length filters
-            if len(byte_seq) < self.config.min_length:
+            length = len(byte_seq)
+            if length < self.config.min_length:
                 continue
-            if self.config.max_length and len(byte_seq) > self.config.max_length:
+            if self.config.max_length and length > self.config.max_length:
                 byte_seq = byte_seq[:self.config.max_length]
+                length = self.config.max_length
             
-            sample_lengths.append(len(byte_seq))
             all_bytes.extend(byte_seq)
+            num_samples += 1
+            total_len += length
+            if num_samples == 1:
+                min_len = max_len = length
+            else:
+                if length < min_len:
+                    min_len = length
+                if length > max_len:
+                    max_len = length
             
             # Progress indicator
             if (i + 1) % 10000 == 0:
                 print(f"  Processed {i + 1} samples...")
         
-        self._data = torch.tensor(all_bytes, dtype=torch.long)
+        # Store as uint8 (1 byte/element) instead of int64 (8 bytes/element)
+        self._data = torch.tensor(all_bytes, dtype=torch.uint8)
         
         # Compute statistics
         self._stats = DatasetStatistics.from_data(self._data)
-        self._stats.num_samples = len(sample_lengths)
-        if sample_lengths:
-            self._stats.avg_bytes_per_sample = sum(sample_lengths) / len(sample_lengths)
-            self._stats.min_bytes = min(sample_lengths)
-            self._stats.max_bytes = max(sample_lengths)
+        self._stats.num_samples = num_samples
+        if num_samples:
+            self._stats.avg_bytes_per_sample = total_len / num_samples
+            self._stats.min_bytes = min_len
+            self._stats.max_bytes = max_len
         
         print(f"Dataset loaded: {self._stats.num_samples} samples, {self._stats.total_bytes:,} bytes")
         
@@ -458,7 +473,8 @@ class TextDirectoryDataset(Dataset):
         self.stride = stride or max_seq_length
         
         # Find all text files
-        all_bytes = []
+        # bytearray uses 1 byte/element vs ~28 bytes for a Python list of ints
+        all_bytes = bytearray()
         file_count = 0
         
         for ext in extensions:
@@ -466,14 +482,14 @@ class TextDirectoryDataset(Dataset):
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         text = f.read()
-                    all_bytes.extend(list(text.encode('utf-8')))
+                    all_bytes.extend(text.encode('utf-8'))
                     file_count += 1
                 except Exception as e:
                     print(f"Warning: Could not read {file_path}: {e}")
         
         print(f"Loaded {file_count} files, {len(all_bytes):,} bytes total")
         
-        self._data = torch.tensor(all_bytes, dtype=torch.long)
+        self._data = torch.tensor(all_bytes, dtype=torch.uint8)
         self._inner = ByteLevelDataset(
             data=self._data,
             max_seq_length=max_seq_length,

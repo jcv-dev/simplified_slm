@@ -48,8 +48,8 @@ class ByteLevelDataset(Dataset):
         start = idx * self.stride
         end = start + self.max_seq_length
         
-        input_ids = self.data[start:end]
-        labels = self.data[start + 1:end + 1]
+        input_ids = self.data[start:end].long()
+        labels = self.data[start + 1:end + 1].long()
         
         return {
             'input_ids': input_ids,
@@ -80,9 +80,9 @@ class TextFileDataset(Dataset):
             text = f.read()
         
         # Convert to bytes
-        byte_data = list(text.encode('utf-8'))
+        byte_data = text.encode('utf-8')
         self.inner = ByteLevelDataset(
-            torch.tensor(byte_data, dtype=torch.long),
+            torch.tensor(byte_data, dtype=torch.uint8),
             max_seq_length=max_seq_length,
             stride=stride,
         )
